@@ -5,7 +5,7 @@ All notable changes to the fc-backend service will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [2.2.0] - 2025-11-28
+## [2.2.0] - 2025-11-30
 
 ### Added
 - **Dynamic Admin Config System**: New API for managing runtime configuration
