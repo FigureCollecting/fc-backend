@@ -19,7 +19,7 @@
     "test:ci": "NODE_OPTIONS=--experimental-vm-modules TEST_MODE=memory node node_modules/jest/bin/jest.js --ci --coverage --testPathIgnorePatterns='cross-service|inter-service|performance'"
   },
   "dependencies": {
-    "axios": "^1.12.0",
+    "axios": "^1.13.5",
     "bcryptjs": "^3.0.3",
     "cheerio": "^1.1.2",
     "cors": "^2.8.5",
