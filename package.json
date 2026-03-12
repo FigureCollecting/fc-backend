@@ -19,7 +19,7 @@
     "test:ci": "NODE_OPTIONS=--experimental-vm-modules TEST_MODE=memory node node_modules/jest/bin/jest.js --ci --coverage --testPathIgnorePatterns='cross-service|inter-service|performance'"
   },
   "dependencies": {
-    "@simplewebauthn/browser": "^13.2.2",
+    "@simplewebauthn/browser": "^13.3.0",
     "@simplewebauthn/server": "^13.2.3",
     "axios": "^1.13.5",
     "bcryptjs": "^3.0.3",
