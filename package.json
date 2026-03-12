@@ -30,7 +30,7 @@
     "express-rate-limit": "^8.2.1",
     "joi": "^18.0.2",
     "jsonwebtoken": "^9.0.3",
-    "mongoose": "^8.19.2",
+    "mongoose": "^9.3.0",
     "otpauth": "^9.5.0",
     "qrcode": "^1.5.4",
     "resend": "^6.9.3"
