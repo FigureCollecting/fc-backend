@@ -21,7 +21,7 @@
   "dependencies": {
     "@simplewebauthn/browser": "^13.2.2",
     "@simplewebauthn/server": "^13.2.3",
-    "axios": "^1.13.5",
+    "axios": "^1.15.2",
     "bcryptjs": "^3.0.3",
     "cheerio": "^1.1.2",
     "cors": "^2.8.5",
