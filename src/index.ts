@@ -1,3 +1,6 @@
+// Must be first: starts OpenTelemetry (env-gated) so auto-instrumentation can
+// patch express/mongoose/http before they are imported below.
+import './tracing';
 import express from 'express';
 import cors from 'cors';
 import mongoose from 'mongoose';
