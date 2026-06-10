@@ -16,14 +16,16 @@ describe('shouldEnableTracing', () => {
     expect(shouldEnableTracing({ TEST_MODE: 'memory', OTEL_TRACES_ENABLED: 'true' })).toBe(false);
   });
 
-  it('honors the explicit OTEL_TRACES_ENABLED override', () => {
-    expect(shouldEnableTracing({ OTEL_TRACES_ENABLED: 'true', NODE_ENV: 'production' })).toBe(true);
+  it('treats OTEL_TRACES_ENABLED=false as a kill switch anywhere', () => {
     expect(shouldEnableTracing({ OTEL_TRACES_ENABLED: 'false', NODE_ENV: 'development' })).toBe(false);
+    expect(shouldEnableTracing({ OTEL_TRACES_ENABLED: 'false', NODE_ENV: 'production' })).toBe(false);
+    expect(shouldEnableTracing({ OTEL_TRACES_ENABLED: 'false' })).toBe(false);
   });
 
-  it('defaults on outside production, off in production', () => {
+  it('defaults on everywhere outside test — production included', () => {
     expect(shouldEnableTracing({ NODE_ENV: 'development' })).toBe(true);
     expect(shouldEnableTracing({})).toBe(true);
-    expect(shouldEnableTracing({ NODE_ENV: 'production' })).toBe(false);
+    expect(shouldEnableTracing({ NODE_ENV: 'production' })).toBe(true);
+    expect(shouldEnableTracing({ NODE_ENV: 'production', OTEL_TRACES_ENABLED: 'true' })).toBe(true);
   });
 });
