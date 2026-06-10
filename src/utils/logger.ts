@@ -10,6 +10,7 @@
 
 import * as fs from 'fs';
 import * as path from 'path';
+import { trace } from '@opentelemetry/api';
 
 const DEBUG = process.env.DEBUG === 'true';
 const TEST_MODE = process.env.TEST_MODE === 'memory' || process.env.NODE_ENV === 'test';
@@ -80,6 +81,21 @@ const LOG_LEVELS: Record<LogLevel, number> = {
   error: 3
 };
 
+/**
+ * Returns `trace=<traceId> span=<spanId>` when an OpenTelemetry span is active,
+ * or '' when there is none (outside a request, or tracing disabled — e.g. tests).
+ * This is what threads a request's traceId through every log line for end-to-end
+ * correlation once a tracing backend is attached. Safe no-op until then.
+ */
+const traceContext = (): string => {
+  const span = trace.getActiveSpan();
+  if (!span) return '';
+  const ctx = span.spanContext();
+  // An all-zero traceId is the invalid/unsampled context — treat as none.
+  if (!ctx.traceId || /^0+$/.test(ctx.traceId)) return '';
+  return `trace=${ctx.traceId} span=${ctx.spanId}`;
+};
+
 class Logger {
   private readonly module: string;
   private readonly enabled: boolean;
@@ -92,33 +108,43 @@ class Logger {
     this.level = LOG_LEVELS[DEBUG_LEVEL as LogLevel] || LOG_LEVELS.error;
   }
 
+  /**
+   * Leading log args: `[MODULE:LEVEL]`, timestamp, and the trace tag IFF a span
+   * is active. With no active span (all existing tests) the shape is unchanged.
+   */
+  private head(level: string): unknown[] {
+    const tc = traceContext();
+    const base: unknown[] = [`[${this.module}:${level}]`, new Date().toISOString()];
+    return tc ? [...base, tc] : base;
+  }
+
   verbose(...args: unknown[]) {
     if (this.enabled && this.level <= LOG_LEVELS.verbose) {
-      console.log(`[${this.module}:VERBOSE]`, new Date().toISOString(), sanitizeArgs(args));
+      console.log(...this.head('VERBOSE'), sanitizeArgs(args));
     }
   }
 
   info(...args: unknown[]) {
     if (this.enabled && this.level <= LOG_LEVELS.info) {
-      console.info(`[${this.module}:INFO]`, new Date().toISOString(), sanitizeArgs(args));
+      console.info(...this.head('INFO'), sanitizeArgs(args));
     }
   }
 
   warn(...args: unknown[]) {
     if (this.enabled && this.level <= LOG_LEVELS.warn) {
-      console.warn(`[${this.module}:WARN]`, new Date().toISOString(), sanitizeArgs(args));
+      console.warn(...this.head('WARN'), sanitizeArgs(args));
     }
   }
 
   error(...args: unknown[]) {
     // Always log errors
-    console.error(`[${this.module}:ERROR]`, new Date().toISOString(), sanitizeArgs(args));
+    console.error(...this.head('ERROR'), sanitizeArgs(args));
   }
 
   // Log only in development or when explicitly enabled
   debug(...args: unknown[]) {
     if (this.enabled) {
-      console.log(`[${this.module}:DEBUG]`, new Date().toISOString(), sanitizeArgs(args));
+      console.log(...this.head('DEBUG'), sanitizeArgs(args));
     }
   }
 }
