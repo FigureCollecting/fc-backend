@@ -7,7 +7,7 @@
 FROM node:25-alpine AS base
 
 # Cache-bust ARG to invalidate Docker layers when security patches are needed
-ARG CACHE_BUST=2026-02-28-minimatch-vuln-fix
+ARG CACHE_BUST=2026-06-12-openssl-cve-fix
 
 WORKDIR /app
 
@@ -76,7 +76,7 @@ RUN npm run build
 FROM node:25-alpine AS production
 
 # Cache-bust ARG for production stage security patches
-ARG CACHE_BUST=2026-02-28-minimatch-vuln-fix
+ARG CACHE_BUST=2026-06-12-openssl-cve-fix
 
 # Build arguments for customization
 ARG GITHUB_ORG=FigureCollecting
