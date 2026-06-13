@@ -32,6 +32,7 @@ import { ATTR_SERVICE_NAME, ATTR_SERVICE_VERSION } from '@opentelemetry/semantic
 import { OTLPTraceExporter } from '@opentelemetry/exporter-trace-otlp-http';
 import { SimpleSpanProcessor, SpanExporter, ReadableSpan } from '@opentelemetry/sdk-trace-base';
 import { ExportResult, ExportResultCode } from '@opentelemetry/core';
+import { redactAttributes } from '@figurecollecting/fc-shared';
 
 /**
  * A SpanExporter that ships nothing. Paired with a real SimpleSpanProcessor it
@@ -47,6 +48,26 @@ class NoopSpanExporter implements SpanExporter {
   }
   shutdown(): Promise<void> {
     return Promise.resolve();
+  }
+}
+
+/**
+ * Wraps a real SpanExporter and scrubs secrets/PII from each span's attributes
+ * before they leave the host. Active only when an OTLP endpoint is configured.
+ */
+export class RedactingSpanExporter implements SpanExporter {
+  constructor(private readonly delegate: SpanExporter) {}
+  export(spans: ReadableSpan[], cb: (r: ExportResult) => void): void {
+    for (const s of spans) {
+      (s as any).attributes = redactAttributes(s.attributes as any);
+    }
+    this.delegate.export(spans, cb);
+  }
+  shutdown(): Promise<void> {
+    return this.delegate.shutdown();
+  }
+  forceFlush(): Promise<void> {
+    return this.delegate.forceFlush ? this.delegate.forceFlush() : Promise.resolve();
   }
 }
 
@@ -90,7 +111,7 @@ export function startTracing(env: NodeJS.ProcessEnv = process.env): NodeSDK | un
     // trace IDs for log correlation) but drop spans through a no-op exporter, so
     // nothing leaves the host and there are no connection errors.
     ...(endpoint
-      ? { traceExporter: new OTLPTraceExporter() }
+      ? { traceExporter: new RedactingSpanExporter(new OTLPTraceExporter()) }
       : { spanProcessors: [new SimpleSpanProcessor(new NoopSpanExporter())] }),
     instrumentations: [getNodeAutoInstrumentations()],
   });

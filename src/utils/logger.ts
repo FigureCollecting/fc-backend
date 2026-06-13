@@ -10,7 +10,7 @@
 
 import * as fs from 'fs';
 import * as path from 'path';
-import { getTraceContext } from '@figurecollecting/fc-shared';
+import { getTraceContext, redactValue } from '@figurecollecting/fc-shared';
 
 const DEBUG = process.env.DEBUG === 'true';
 const TEST_MODE = process.env.TEST_MODE === 'memory' || process.env.NODE_ENV === 'test';
@@ -70,7 +70,8 @@ const sanitizeLogValue = (value: unknown): string => {
  * Uses JSON.stringify to break CodeQL taint tracking.
  */
 const sanitizeArgs = (args: unknown[]): string => {
-  const sanitized = args.map(arg => sanitizeLogValue(arg));
+  // Redact secrets/PII first (deep), THEN break taint flow with string sanitization.
+  const sanitized = args.map(arg => sanitizeLogValue(redactValue(arg)));
   return JSON.stringify(sanitized);
 };
 
@@ -193,7 +194,8 @@ export const syncLogger = {
     // Sanitize user-provided values before logging and file write
     const safeSessionId = sanitizeLogValue(event.sessionId);
     const safeMfcId = event.mfcId ? sanitizeLogValue(event.mfcId) : '';
-    const safeEntry = JSON.stringify(entry);
+    // Redact secrets/PII from the structured entry before serialization.
+    const safeEntry = JSON.stringify(redactValue(entry));
     const logLine = `[${timestamp}] [SYNC] ${event.event.toUpperCase()} session=${safeSessionId}${safeMfcId ? ` mfcId=${safeMfcId}` : ''} ${safeEntry}`;
 
     // Console output
