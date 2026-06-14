@@ -7,7 +7,7 @@
 FROM node:25-alpine AS base
 
 # Cache-bust ARG to invalidate Docker layers when security patches are needed
-ARG CACHE_BUST=2026-02-28-minimatch-vuln-fix
+ARG CACHE_BUST=2026-06-12-openssl-cve-fix
 
 WORKDIR /app
 
@@ -20,16 +20,20 @@ RUN apk update && \
     npm install -g npm@latest && \
     npm cache clean --force
 
-# Copy package files
-COPY package*.json ./
+# Copy package files (.npmrc maps @figurecollecting to GitHub Packages; it carries
+# only a ${NODE_AUTH_TOKEN} placeholder, never a real token)
+COPY package*.json .npmrc ./
 
 # ============================================================================
 # Development Stage - For local development with hot reload
 # ============================================================================
 FROM base AS development
 
-# Install all dependencies (including dev dependencies)
-RUN npm ci
+# Install all dependencies (including dev dependencies).
+# Token is provided via a BuildKit secret mount — exposed only for this RUN,
+# never written to a layer or visible in `docker history`.
+RUN --mount=type=secret,id=node_auth_token \
+    NODE_AUTH_TOKEN="$(cat /run/secrets/node_auth_token)" npm ci
 
 # Copy source code
 COPY . .
@@ -47,7 +51,8 @@ CMD ["npm", "run", "dev"]
 FROM base AS test
 
 # Install all dependencies (including dev dependencies for testing)
-RUN npm ci
+RUN --mount=type=secret,id=node_auth_token \
+    NODE_AUTH_TOKEN="$(cat /run/secrets/node_auth_token)" npm ci
 
 # Copy source code
 COPY . .
@@ -62,7 +67,8 @@ FROM base AS builder
 
 # Install all dependencies (including dev for building)
 # Using --ignore-scripts for security to prevent execution of npm scripts
-RUN npm ci --ignore-scripts
+RUN --mount=type=secret,id=node_auth_token \
+    NODE_AUTH_TOKEN="$(cat /run/secrets/node_auth_token)" npm ci --ignore-scripts
 
 # Copy source code
 COPY . .
@@ -76,7 +82,7 @@ RUN npm run build
 FROM node:25-alpine AS production
 
 # Cache-bust ARG for production stage security patches
-ARG CACHE_BUST=2026-02-28-minimatch-vuln-fix
+ARG CACHE_BUST=2026-06-12-openssl-cve-fix
 
 # Build arguments for customization
 ARG GITHUB_ORG=FigureCollecting
@@ -102,12 +108,14 @@ RUN apk add --no-cache dumb-init && \
 
 WORKDIR /app
 
-# Copy package files
-COPY package*.json ./
+# Copy package files (.npmrc maps @figurecollecting to GitHub Packages; placeholder token only)
+COPY package*.json .npmrc ./
 
 # Install production dependencies only
-# Using --ignore-scripts for security to prevent execution of npm scripts
-RUN npm ci --omit=dev --ignore-scripts && \
+# Using --ignore-scripts for security to prevent execution of npm scripts.
+# Token via BuildKit secret mount — never written to a layer.
+RUN --mount=type=secret,id=node_auth_token \
+    NODE_AUTH_TOKEN="$(cat /run/secrets/node_auth_token)" npm ci --omit=dev --ignore-scripts && \
     npm cache clean --force
 
 # Copy built application from builder

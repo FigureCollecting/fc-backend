@@ -10,6 +10,7 @@
 
 import * as fs from 'fs';
 import * as path from 'path';
+import { getTraceContext, redactValue } from '@figurecollecting/fc-shared';
 
 const DEBUG = process.env.DEBUG === 'true';
 const TEST_MODE = process.env.TEST_MODE === 'memory' || process.env.NODE_ENV === 'test';
@@ -69,7 +70,8 @@ const sanitizeLogValue = (value: unknown): string => {
  * Uses JSON.stringify to break CodeQL taint tracking.
  */
 const sanitizeArgs = (args: unknown[]): string => {
-  const sanitized = args.map(arg => sanitizeLogValue(arg));
+  // Redact secrets/PII first (deep), THEN break taint flow with string sanitization.
+  const sanitized = args.map(arg => sanitizeLogValue(redactValue(arg)));
   return JSON.stringify(sanitized);
 };
 
@@ -92,33 +94,43 @@ class Logger {
     this.level = LOG_LEVELS[DEBUG_LEVEL as LogLevel] || LOG_LEVELS.error;
   }
 
+  /**
+   * Leading log args: `[MODULE:LEVEL]`, timestamp, and the trace tag IFF a span
+   * is active. With no active span (all existing tests) the shape is unchanged.
+   */
+  private head(level: string): unknown[] {
+    const tc = getTraceContext();
+    const base: unknown[] = [`[${this.module}:${level}]`, new Date().toISOString()];
+    return tc ? [...base, tc] : base;
+  }
+
   verbose(...args: unknown[]) {
     if (this.enabled && this.level <= LOG_LEVELS.verbose) {
-      console.log(`[${this.module}:VERBOSE]`, new Date().toISOString(), sanitizeArgs(args));
+      console.log(...this.head('VERBOSE'), sanitizeArgs(args));
     }
   }
 
   info(...args: unknown[]) {
     if (this.enabled && this.level <= LOG_LEVELS.info) {
-      console.info(`[${this.module}:INFO]`, new Date().toISOString(), sanitizeArgs(args));
+      console.info(...this.head('INFO'), sanitizeArgs(args));
     }
   }
 
   warn(...args: unknown[]) {
     if (this.enabled && this.level <= LOG_LEVELS.warn) {
-      console.warn(`[${this.module}:WARN]`, new Date().toISOString(), sanitizeArgs(args));
+      console.warn(...this.head('WARN'), sanitizeArgs(args));
     }
   }
 
   error(...args: unknown[]) {
     // Always log errors
-    console.error(`[${this.module}:ERROR]`, new Date().toISOString(), sanitizeArgs(args));
+    console.error(...this.head('ERROR'), sanitizeArgs(args));
   }
 
   // Log only in development or when explicitly enabled
   debug(...args: unknown[]) {
     if (this.enabled) {
-      console.log(`[${this.module}:DEBUG]`, new Date().toISOString(), sanitizeArgs(args));
+      console.log(...this.head('DEBUG'), sanitizeArgs(args));
     }
   }
 }
@@ -182,7 +194,8 @@ export const syncLogger = {
     // Sanitize user-provided values before logging and file write
     const safeSessionId = sanitizeLogValue(event.sessionId);
     const safeMfcId = event.mfcId ? sanitizeLogValue(event.mfcId) : '';
-    const safeEntry = JSON.stringify(entry);
+    // Redact secrets/PII from the structured entry before serialization.
+    const safeEntry = JSON.stringify(redactValue(entry));
     const logLine = `[${timestamp}] [SYNC] ${event.event.toUpperCase()} session=${safeSessionId}${safeMfcId ? ` mfcId=${safeMfcId}` : ''} ${safeEntry}`;
 
     // Console output
