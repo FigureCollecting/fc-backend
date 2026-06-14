@@ -20,6 +20,9 @@ describe('Database Connection Retry Logic', () => {
     
     // Restore environment
     process.env = { ...originalEnv };
+    // globalSetup sets TEST_MONGODB_URI to the in-memory server, which connectDB
+    // prefers over MONGODB_URI; clear it so this test exercises the MONGODB_URI path.
+    delete process.env.TEST_MONGODB_URI;
     process.env.MONGODB_URI = 'mongodb://localhost:27017/fc-db';
     // Set NODE_ENV to production to test actual retry logic
     process.env.NODE_ENV = 'production';
