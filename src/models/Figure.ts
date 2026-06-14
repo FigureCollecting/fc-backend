@@ -266,7 +266,7 @@ FigureSchema.index({ userId: 1, rating: -1 });
 FigureSchema.index({ name: 'text', manufacturer: 'text', tags: 'text' });
 
 // Schema v3: Derive manufacturer from companyRoles if not provided
-FigureSchema.pre('save', function (next) {
+FigureSchema.pre('save', function () {
   // If manufacturer is not set but we have companyRoles, derive it
   if (!this.manufacturer && this.companyRoles && this.companyRoles.length > 0) {
     // Find the first company with 'Manufacturer' role, or just use first company
@@ -278,7 +278,6 @@ FigureSchema.pre('save', function (next) {
       this.manufacturer = derivedManufacturer;
     }
   }
-  next();
 });
 
 export default mongoose.model<IFigure>('Figure', FigureSchema);

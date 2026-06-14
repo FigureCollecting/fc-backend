@@ -266,7 +266,11 @@ describe('Database Integration Tests', () => {
         }
         
       } catch (error: any) {
-        if (error.message.includes('Transaction') || error.message.includes('replica set')) {
+        if (
+          error.message.includes('Transaction') ||
+          error.message.includes('replica set') ||
+          error.message.includes('retryable writes')
+        ) {
           console.log('Skipping transaction test - transactions not supported (replica set required)');
         } else {
           throw error;
@@ -315,7 +319,11 @@ describe('Database Integration Tests', () => {
         }
         
       } catch (error: any) {
-        if (error.message.includes('Transaction') || error.message.includes('replica set')) {
+        if (
+          error.message.includes('Transaction') ||
+          error.message.includes('replica set') ||
+          error.message.includes('retryable writes')
+        ) {
           console.log('Skipping failed transaction test - transactions not supported');
         } else {
           // Expected behavior for duplicate key error
