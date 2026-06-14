@@ -33,7 +33,7 @@ jobs:
         run: npm run lint || true
 
       - name: Run unit tests with coverage
-        run: npm run test:ci -- --coverage
+        run: npm run test:ci -- --coverage --runInBand
         env:
           TEST_MODE: memory
 
