@@ -7,13 +7,13 @@
 FROM node:26-alpine AS base
 
 # Cache-bust ARG to invalidate Docker layers when security patches are needed
-ARG CACHE_BUST=2026-06-12-openssl-cve-fix
+ARG CACHE_BUST=2026-07-01-npm-undici-cve-fix
 
 WORKDIR /app
 
 # Upgrade all Alpine packages for latest security patches (openssl, busybox, etc.)
 # Upgrade npm to latest version to fix bundled dependency vulnerabilities
-# (tar >=7.5.7, glob >=13.0.2, brace-expansion >=5.0.1)
+# (tar >=7.5.7, glob >=13.0.2, brace-expansion >=5.0.1, undici >=6.27.0)
 RUN apk update && \
     apk upgrade --no-cache && \
     apk add --no-cache dumb-init && \
@@ -82,7 +82,7 @@ RUN npm run build
 FROM node:26-alpine AS production
 
 # Cache-bust ARG for production stage security patches
-ARG CACHE_BUST=2026-06-12-openssl-cve-fix
+ARG CACHE_BUST=2026-07-01-npm-undici-cve-fix
 
 # Build arguments for customization
 ARG GITHUB_ORG=FigureCollecting
