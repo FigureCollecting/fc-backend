@@ -57,21 +57,24 @@ jobs:
     permissions:
       contents: read
       security-events: write
+      packages: read
     steps:
       - name: Checkout code
         uses: actions/checkout@v6
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@v4
 
       - name: Build Docker image for scanning
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: .
           load: true
           tags: fc-backend:scan
           cache-from: type=gha
           cache-to: type=gha,mode=max
+          secrets: |
+            node_auth_token=${{ secrets.GITHUB_TOKEN }}
 
       - name: Run Trivy container scan
         uses: aquasecurity/trivy-action@master
@@ -93,6 +96,9 @@ jobs:
   npm-audit:
     name: NPM Audit
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: read
     steps:
       - name: Checkout code
         uses: actions/checkout@v6
@@ -100,11 +106,13 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v6
         with:
-          node-version: '24'
+          node-version: '26'
           cache: 'npm'
 
       - name: Install dependencies
         run: npm ci
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Run npm audit
         run: |

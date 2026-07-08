@@ -1,44 +1,38 @@
 import mongoose from 'mongoose';
-import { MongoMemoryServer } from 'mongodb-memory-server';
 import jwt from 'jsonwebtoken';
 import User from '../src/models/User';
 import Figure from '../src/models/Figure';
 
-let mongoServer: MongoMemoryServer;
-
-// Global testing setup
+// The in-memory MongoDB is started ONCE by jest globalSetup (tests/globalSetup.ts)
+// in the Node main process, and stopped by globalTeardown. The server's URI is
+// passed to every worker via process.env. Here we only connect/disconnect the
+// per-worker mongoose client to that shared server. Stopping the server outside
+// the jest VM sandbox avoids the Node 26 teardown crash in killProcess.
 beforeAll(async () => {
   // Set environment to test
   process.env.NODE_ENV = 'test';
+
+  const mongoUri = process.env.TEST_MONGODB_URI || process.env.MONGODB_URI;
+  if (!mongoUri) {
+    throw new Error('No MongoDB URI available - globalSetup did not run');
+  }
 
   // If already connected, disconnect first
   if (mongoose.connection.readyState !== 0) {
     await mongoose.connection.close();
   }
 
-  // Create MongoDB Memory Server
-  mongoServer = await MongoMemoryServer.create();
-  const mongoUri = mongoServer.getUri();
-  process.env.TEST_MONGODB_URI = mongoUri;
-
-  // Ensure only one connection
-  if (mongoose.connection.readyState === 0) {
-    await mongoose.connect(mongoUri, {
-      autoIndex: true,
-      serverSelectionTimeoutMS: 5000
-    });
-  }
+  await mongoose.connect(mongoUri, {
+    autoIndex: true,
+    serverSelectionTimeoutMS: 5000
+  });
 });
 
 afterAll(async () => {
-  // Disconnect if still connected
+  // Disconnect this worker's mongoose client. The shared in-memory server is
+  // stopped by jest globalTeardown, not here.
   if (mongoose.connection.readyState !== 0) {
     await mongoose.connection.close();
-  }
-
-  // Stop MongoDB Memory Server
-  if (mongoServer) {
-    await mongoServer.stop();
   }
 });
 
