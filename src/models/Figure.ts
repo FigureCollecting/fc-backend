@@ -54,6 +54,31 @@ export interface IArtistRole {
   roleName?: string;
 }
 
+/**
+ * Horizontal ground-contact footprint of a matted figure image, measured from
+ * the matte's alpha channel. Mirrors fc-shared FigureContactBand field-for-field.
+ */
+export interface IFigureContactBand {
+  centerXFrac: number;
+  widthFrac: number;
+}
+
+/**
+ * Display + grounding metadata that the image-manager service PRODUCES and
+ * fc-mobile CONSUMES. Frozen cross-service contract — mirrors fc-shared
+ * FigureDisplayMeta exactly (nested object, all fields optional). Additive
+ * only: imageUrl remains the untouched source-image fallback.
+ */
+export interface IFigureDisplayMeta {
+  matted?: boolean;
+  matteImageId?: string;
+  matteVersionId?: string;
+  bottomMarginFrac?: number;
+  contactBand?: IFigureContactBand;
+  thumbhash?: string;
+  dominantColor?: string;
+}
+
 export interface IFigure extends Document {
   _id: mongoose.Types.ObjectId;
 
@@ -76,6 +101,9 @@ export interface IFigure extends Document {
   // Media
   imageUrl?: string;
   imageUrls?: string[];
+
+  // Display + grounding metadata (image-manager -> fc-mobile contract)
+  displayMeta?: IFigureDisplayMeta;
 
   // Releases (supports multiple releases/rereleases)
   releases?: IRelease[];
@@ -179,6 +207,28 @@ const ArtistRoleSchema = new Schema<IArtistRole>(
   { _id: false }
 );
 
+const ContactBandSchema = new Schema<IFigureContactBand>(
+  {
+    centerXFrac: { type: Number },
+    widthFrac: { type: Number }
+  },
+  { _id: false }
+);
+
+// Mirrors fc-shared FigureDisplayMeta: nested, all-optional, additive-only.
+const DisplayMetaSchema = new Schema<IFigureDisplayMeta>(
+  {
+    matted: { type: Boolean },
+    matteImageId: { type: String },
+    matteVersionId: { type: String },
+    bottomMarginFrac: { type: Number },
+    contactBand: { type: ContactBandSchema },
+    thumbhash: { type: String },
+    dominantColor: { type: String }
+  },
+  { _id: false }
+);
+
 const FigureSchema = new Schema<IFigure>(
   {
     // Core identification
@@ -201,6 +251,10 @@ const FigureSchema = new Schema<IFigure>(
     // Media
     imageUrl: { type: String },
     imageUrls: { type: [String], default: [] },
+
+    // Display + grounding metadata (image-manager -> fc-mobile contract).
+    // No default: stays undefined until image-manager populates it.
+    displayMeta: { type: DisplayMetaSchema },
 
     // Releases
     releases: { type: [ReleaseSchema], default: [] },
