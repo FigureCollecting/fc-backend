@@ -132,4 +132,35 @@ describe('parseDimensionsString', () => {
       expect(result).toBeNull();
     });
   });
+
+  // Defense-in-depth: even if malformed/concatenated data reaches the parser,
+  // physically impossible measurements must never be stored. Nothing real is
+  // taller than ~2500mm (a 1/1 figure is ~1700mm; margin above that).
+  describe('sanity cap on absurd measurements', () => {
+    it('should drop an absurd field but keep the sane ones', () => {
+      const result = parseDimensionsString('W=250mm, H=660580570mm');
+      expect(result).toEqual({ widthMm: 250 });
+      expect(result?.heightMm).toBeUndefined();
+    });
+
+    it('should reject a fully concatenated value (the original dimension bug)', () => {
+      const result = parseDimensionsString('H=250210470mm');
+      expect(result).toBeNull();
+    });
+
+    it('should drop any dimension over the ~2500mm ceiling', () => {
+      expect(parseDimensionsString('H=3000mm')).toBeNull();
+      expect(parseDimensionsString('W=9000mm, D=8000mm')).toBeNull();
+    });
+
+    it('should keep a legitimate 1/1-scale height (~1700mm)', () => {
+      const result = parseDimensionsString('H=1700mm');
+      expect(result).toEqual({ heightMm: 1700 });
+    });
+
+    it('should still keep scale even if a measurement is capped away', () => {
+      const result = parseDimensionsString('1/6, H=999999mm');
+      expect(result).toEqual({ scaledHeight: '1/6' });
+    });
+  });
 });
