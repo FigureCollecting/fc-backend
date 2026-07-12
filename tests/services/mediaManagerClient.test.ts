@@ -7,17 +7,17 @@ const mockedAxios = axios as jest.Mocked<typeof axios>;
 import {
   ingestGalleryImages,
   getGallery,
-  ImageManagerClientError
-} from '../../src/services/imageManagerClient';
+  MediaManagerClientError
+} from '../../src/services/mediaManagerClient';
 
 const ORIGINAL_ENV = process.env;
 
-describe('imageManagerClient', () => {
+describe('mediaManagerClient', () => {
   beforeEach(() => {
     jest.resetAllMocks();
     process.env = { ...ORIGINAL_ENV };
-    delete process.env.IMAGE_MANAGER_URL;
-    delete process.env.IMAGE_MANAGER_SERVICE_TOKEN;
+    delete process.env.MEDIA_MANAGER_URL;
+    delete process.env.MEDIA_MANAGER_SERVICE_TOKEN;
   });
 
   afterAll(() => {
@@ -25,7 +25,7 @@ describe('imageManagerClient', () => {
   });
 
   describe('ingestGalleryImages', () => {
-    it('POSTs to /galleries/ingest with the default URL when IMAGE_MANAGER_URL is unset', async () => {
+    it('POSTs to /galleries/ingest with the default URL when MEDIA_MANAGER_URL is unset', async () => {
       mockedAxios.post.mockResolvedValueOnce({
         status: 200,
         data: { figureId: 'fig-1', imagesQueued: 1, duplicatesSkipped: 0 }
@@ -38,8 +38,8 @@ describe('imageManagerClient', () => {
       expect(url).toMatch(/^http:\/\/localhost:\d+\/galleries\/ingest$/);
     });
 
-    it('POSTs to {IMAGE_MANAGER_URL}/galleries/ingest when the env var is set', async () => {
-      process.env.IMAGE_MANAGER_URL = 'http://image-manager:8000';
+    it('POSTs to {MEDIA_MANAGER_URL}/galleries/ingest when the env var is set', async () => {
+      process.env.MEDIA_MANAGER_URL = 'http://media-manager:8000';
       mockedAxios.post.mockResolvedValueOnce({
         status: 200,
         data: { figureId: 'fig-1', imagesQueued: 1, duplicatesSkipped: 0 }
@@ -48,7 +48,7 @@ describe('imageManagerClient', () => {
       await ingestGalleryImages('fig-1', [{ url: 'https://example.com/a.jpg' }]);
 
       const [url] = mockedAxios.post.mock.calls[0];
-      expect(url).toBe('http://image-manager:8000/galleries/ingest');
+      expect(url).toBe('http://media-manager:8000/galleries/ingest');
     });
 
     it('builds the wire payload with camelCase fields, defaulting missing position to array index', async () => {
@@ -89,8 +89,8 @@ describe('imageManagerClient', () => {
       expect(config?.timeout).toBeGreaterThan(0);
     });
 
-    it('sends an Authorization Bearer header when IMAGE_MANAGER_SERVICE_TOKEN is configured', async () => {
-      process.env.IMAGE_MANAGER_SERVICE_TOKEN = 'service-jwt-abc';
+    it('sends an Authorization Bearer header when MEDIA_MANAGER_SERVICE_TOKEN is configured', async () => {
+      process.env.MEDIA_MANAGER_SERVICE_TOKEN = 'service-jwt-abc';
       mockedAxios.post.mockResolvedValueOnce({
         status: 200,
         data: { figureId: 'fig-1', imagesQueued: 1, duplicatesSkipped: 0 }
@@ -116,7 +116,7 @@ describe('imageManagerClient', () => {
       expect(result).toEqual({ figureId: 'fig-9', imagesQueued: 2, duplicatesSkipped: 1 });
     });
 
-    it('throws ImageManagerClientError with kind "timeout" when the request times out', async () => {
+    it('throws MediaManagerClientError with kind "timeout" when the request times out', async () => {
       const timeoutError: any = new Error('timeout of 15000ms exceeded');
       timeoutError.isAxiosError = true;
       timeoutError.code = 'ECONNABORTED';
@@ -124,11 +124,11 @@ describe('imageManagerClient', () => {
       mockedAxios.isAxiosError.mockReturnValueOnce(true);
 
       const promise = ingestGalleryImages('fig-1', [{ url: 'https://example.com/a.jpg' }]);
-      await expect(promise).rejects.toBeInstanceOf(ImageManagerClientError);
+      await expect(promise).rejects.toBeInstanceOf(MediaManagerClientError);
       await expect(promise).rejects.toMatchObject({ kind: 'timeout' });
     });
 
-    it('throws ImageManagerClientError with kind "http" and the response status on a non-2xx response', async () => {
+    it('throws MediaManagerClientError with kind "http" and the response status on a non-2xx response', async () => {
       const httpError: any = new Error('Request failed with status code 422');
       httpError.isAxiosError = true;
       httpError.response = { status: 422, data: { detail: 'validation error' } };
@@ -143,7 +143,7 @@ describe('imageManagerClient', () => {
       });
     });
 
-    it('throws ImageManagerClientError with kind "network" on connection refused', async () => {
+    it('throws MediaManagerClientError with kind "network" on connection refused', async () => {
       const networkError: any = new Error('connect ECONNREFUSED 127.0.0.1:8000');
       networkError.isAxiosError = true;
       networkError.code = 'ECONNREFUSED';
@@ -158,7 +158,7 @@ describe('imageManagerClient', () => {
       });
     });
 
-    it('throws ImageManagerClientError with kind "unknown" on a non-axios error', async () => {
+    it('throws MediaManagerClientError with kind "unknown" on a non-axios error', async () => {
       mockedAxios.post.mockRejectedValueOnce(new Error('something exploded'));
       mockedAxios.isAxiosError.mockReturnValueOnce(false);
 
@@ -169,7 +169,7 @@ describe('imageManagerClient', () => {
       });
     });
 
-    it('throws ImageManagerClientError with kind "unknown" on a malformed (schema-violating) response', async () => {
+    it('throws MediaManagerClientError with kind "unknown" on a malformed (schema-violating) response', async () => {
       mockedAxios.post.mockResolvedValueOnce({
         status: 200,
         data: { figureId: 'fig-1' } // missing imagesQueued/duplicatesSkipped
@@ -184,8 +184,8 @@ describe('imageManagerClient', () => {
   });
 
   describe('getGallery', () => {
-    it('GETs {IMAGE_MANAGER_URL}/galleries/{figureId}', async () => {
-      process.env.IMAGE_MANAGER_URL = 'http://image-manager:8000';
+    it('GETs {MEDIA_MANAGER_URL}/galleries/{figureId}', async () => {
+      process.env.MEDIA_MANAGER_URL = 'http://media-manager:8000';
       mockedAxios.get.mockResolvedValueOnce({
         status: 200,
         data: { figureId: 'fig-1', images: [], count: 0 }
@@ -194,7 +194,7 @@ describe('imageManagerClient', () => {
       await getGallery('fig-1');
 
       const [url] = mockedAxios.get.mock.calls[0];
-      expect(url).toBe('http://image-manager:8000/galleries/fig-1');
+      expect(url).toBe('http://media-manager:8000/galleries/fig-1');
     });
 
     it('sends a sane timeout and omits Authorization when no token configured', async () => {
@@ -211,8 +211,8 @@ describe('imageManagerClient', () => {
       expect(config?.headers).not.toHaveProperty('Authorization');
     });
 
-    it('sends an Authorization Bearer header when IMAGE_MANAGER_SERVICE_TOKEN is configured', async () => {
-      process.env.IMAGE_MANAGER_SERVICE_TOKEN = 'service-jwt-xyz';
+    it('sends an Authorization Bearer header when MEDIA_MANAGER_SERVICE_TOKEN is configured', async () => {
+      process.env.MEDIA_MANAGER_SERVICE_TOKEN = 'service-jwt-xyz';
       mockedAxios.get.mockResolvedValueOnce({
         status: 200,
         data: { figureId: 'fig-1', images: [], count: 0 }
@@ -239,7 +239,7 @@ describe('imageManagerClient', () => {
       expect(result).toEqual({ figureId: 'fig-1', images, count: 2 });
     });
 
-    it('throws ImageManagerClientError with kind "timeout" when the poll request times out', async () => {
+    it('throws MediaManagerClientError with kind "timeout" when the poll request times out', async () => {
       const timeoutError: any = new Error('timeout of 5000ms exceeded');
       timeoutError.isAxiosError = true;
       timeoutError.code = 'ECONNABORTED';
@@ -249,7 +249,7 @@ describe('imageManagerClient', () => {
       await expect(getGallery('fig-1')).rejects.toMatchObject({ kind: 'timeout' });
     });
 
-    it('throws ImageManagerClientError with kind "http" and the response status on a non-2xx response', async () => {
+    it('throws MediaManagerClientError with kind "http" and the response status on a non-2xx response', async () => {
       const httpError: any = new Error('Request failed with status code 404');
       httpError.isAxiosError = true;
       httpError.response = { status: 404, data: { detail: 'not found' } };
@@ -259,7 +259,7 @@ describe('imageManagerClient', () => {
       await expect(getGallery('fig-1')).rejects.toMatchObject({ kind: 'http', status: 404 });
     });
 
-    it('throws ImageManagerClientError with kind "network" on connection refused', async () => {
+    it('throws MediaManagerClientError with kind "network" on connection refused', async () => {
       const networkError: any = new Error('connect ECONNREFUSED 127.0.0.1:8000');
       networkError.isAxiosError = true;
       networkError.code = 'ECONNREFUSED';
@@ -270,14 +270,14 @@ describe('imageManagerClient', () => {
       await expect(getGallery('fig-1')).rejects.toMatchObject({ kind: 'network' });
     });
 
-    it('throws ImageManagerClientError with kind "unknown" on a non-axios error', async () => {
+    it('throws MediaManagerClientError with kind "unknown" on a non-axios error', async () => {
       mockedAxios.get.mockRejectedValueOnce(new Error('something exploded'));
       mockedAxios.isAxiosError.mockReturnValueOnce(false);
 
       await expect(getGallery('fig-1')).rejects.toMatchObject({ kind: 'unknown' });
     });
 
-    it('throws ImageManagerClientError with kind "unknown" on a malformed (schema-violating) response', async () => {
+    it('throws MediaManagerClientError with kind "unknown" on a malformed (schema-violating) response', async () => {
       mockedAxios.get.mockResolvedValueOnce({
         status: 200,
         data: { figureId: 'fig-1' } // missing images/count
@@ -287,9 +287,9 @@ describe('imageManagerClient', () => {
     });
   });
 
-  describe('ImageManagerClientError', () => {
+  describe('MediaManagerClientError', () => {
     it('is an instance of Error with a message, kind, and optional status', () => {
-      const err = new ImageManagerClientError('boom', 'http', 500);
+      const err = new MediaManagerClientError('boom', 'http', 500);
       expect(err).toBeInstanceOf(Error);
       expect(err.message).toBe('boom');
       expect(err.kind).toBe('http');
@@ -297,7 +297,7 @@ describe('imageManagerClient', () => {
     });
 
     it('leaves status undefined for non-http kinds', () => {
-      const err = new ImageManagerClientError('boom', 'network');
+      const err = new MediaManagerClientError('boom', 'network');
       expect(err.status).toBeUndefined();
     });
   });

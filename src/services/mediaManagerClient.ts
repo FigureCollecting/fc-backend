@@ -2,11 +2,11 @@ import axios, { AxiosRequestConfig, AxiosResponse } from 'axios';
 import * as https from 'https';
 
 /**
- * Typed HTTP client for the image-manager microservice.
+ * Typed HTTP client for the media-manager microservice.
  *
  * Scope note: this module is intentionally NOT wired into any route/controller
  * yet. It exists purely as the typed client + tests for a later phase that
- * will route figure images through image-manager for matting/derived metadata.
+ * will route figure images through media-manager for matting/derived metadata.
  */
 
 // ---------------------------------------------------------------------------
@@ -15,10 +15,10 @@ import * as https from 'https';
 
 // Read env vars at call time (not module load) so tests can set/change them,
 // mirroring the SCRAPER_SERVICE_URL pattern in figureController.ts.
-const getImageManagerUrl = (): string =>
-  process.env.IMAGE_MANAGER_URL || 'http://localhost:8000'; // NOSONAR - internal service URL from env
+const getMediaManagerUrl = (): string =>
+  process.env.MEDIA_MANAGER_URL || 'http://localhost:8000'; // NOSONAR - internal service URL from env
 
-const getServiceToken = (): string | undefined => process.env.IMAGE_MANAGER_SERVICE_TOKEN;
+const getServiceToken = (): string | undefined => process.env.MEDIA_MANAGER_SERVICE_TOKEN;
 
 // Ingest just enqueues a background job, so a generous timeout absorbs network
 // hiccups without much cost. The poll GET is expected to be called repeatedly
@@ -47,38 +47,38 @@ const buildHeaders = (): Record<string, string> => {
 // Errors
 // ---------------------------------------------------------------------------
 
-export type ImageManagerErrorKind = 'timeout' | 'network' | 'http' | 'unknown';
+export type MediaManagerErrorKind = 'timeout' | 'network' | 'http' | 'unknown';
 
-export class ImageManagerClientError extends Error {
-  readonly kind: ImageManagerErrorKind;
+export class MediaManagerClientError extends Error {
+  readonly kind: MediaManagerErrorKind;
   readonly status?: number;
 
-  constructor(message: string, kind: ImageManagerErrorKind, status?: number) {
+  constructor(message: string, kind: MediaManagerErrorKind, status?: number) {
     super(message);
-    this.name = 'ImageManagerClientError';
+    this.name = 'MediaManagerClientError';
     this.kind = kind;
     this.status = status;
   }
 }
 
-/** Classify any error thrown during a request and re-throw as ImageManagerClientError. Never lets a raw axios/network error escape. */
+/** Classify any error thrown during a request and re-throw as MediaManagerClientError. Never lets a raw axios/network error escape. */
 const handleRequestError = (error: unknown): never => {
   if (axios.isAxiosError(error)) {
     if (error.code === 'ECONNABORTED') {
-      throw new ImageManagerClientError(`image-manager request timed out: ${error.message}`, 'timeout');
+      throw new MediaManagerClientError(`media-manager request timed out: ${error.message}`, 'timeout');
     }
     if (error.response) {
-      throw new ImageManagerClientError(
-        `image-manager returned HTTP ${error.response.status}`,
+      throw new MediaManagerClientError(
+        `media-manager returned HTTP ${error.response.status}`,
         'http',
         error.response.status
       );
     }
-    throw new ImageManagerClientError(`image-manager network error: ${error.message}`, 'network');
+    throw new MediaManagerClientError(`media-manager network error: ${error.message}`, 'network');
   }
 
   const message = error instanceof Error ? error.message : String(error);
-  throw new ImageManagerClientError(`image-manager client error: ${message}`, 'unknown');
+  throw new MediaManagerClientError(`media-manager client error: ${message}`, 'unknown');
 };
 
 // ---------------------------------------------------------------------------
@@ -130,7 +130,7 @@ const isValidGetGalleryResponse = (data: any): data is GetGalleryResponse =>
 // ---------------------------------------------------------------------------
 
 /**
- * POST {IMAGE_MANAGER_URL}/galleries/ingest — queues the given images for
+ * POST {MEDIA_MANAGER_URL}/galleries/ingest — queues the given images for
  * matting/processing. The server's `position` field is required, so a caller
  * omitting `position` gets it defaulted to the image's array index here.
  */
@@ -161,7 +161,7 @@ export async function ingestGalleryImages(
   let response: AxiosResponse<IngestGalleryImagesResponse>;
   try {
     response = await axios.post<IngestGalleryImagesResponse>(
-      `${getImageManagerUrl()}/galleries/ingest`,
+      `${getMediaManagerUrl()}/galleries/ingest`,
       payload,
       config
     );
@@ -170,14 +170,14 @@ export async function ingestGalleryImages(
   }
 
   if (!isValidIngestResponse(response.data)) {
-    throw new ImageManagerClientError('image-manager returned a malformed ingest response', 'unknown');
+    throw new MediaManagerClientError('media-manager returned a malformed ingest response', 'unknown');
   }
 
   return response.data;
 }
 
 /**
- * GET {IMAGE_MANAGER_URL}/galleries/{figureId} — fetches matted gallery
+ * GET {MEDIA_MANAGER_URL}/galleries/{figureId} — fetches matted gallery
  * contents. Ingest is async, so a Phase-4 poller will call this repeatedly
  * until processing completes.
  */
@@ -190,13 +190,13 @@ export async function getGallery(figureId: string): Promise<GetGalleryResponse> 
 
   let response: AxiosResponse<GetGalleryResponse>;
   try {
-    response = await axios.get<GetGalleryResponse>(`${getImageManagerUrl()}/galleries/${figureId}`, config);
+    response = await axios.get<GetGalleryResponse>(`${getMediaManagerUrl()}/galleries/${figureId}`, config);
   } catch (error) {
     return handleRequestError(error);
   }
 
   if (!isValidGetGalleryResponse(response.data)) {
-    throw new ImageManagerClientError('image-manager returned a malformed gallery response', 'unknown');
+    throw new MediaManagerClientError('media-manager returned a malformed gallery response', 'unknown');
   }
 
   return response.data;

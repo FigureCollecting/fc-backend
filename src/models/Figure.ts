@@ -64,7 +64,7 @@ export interface IFigureContactBand {
 }
 
 /**
- * Display + grounding metadata that the image-manager service PRODUCES and
+ * Display + grounding metadata that the media-manager service PRODUCES and
  * fc-mobile CONSUMES. Frozen cross-service contract — mirrors fc-shared
  * FigureDisplayMeta exactly (nested object, all fields optional). Additive
  * only: imageUrl remains the untouched source-image fallback.
@@ -102,7 +102,7 @@ export interface IFigure extends Document {
   imageUrl?: string;
   imageUrls?: string[];
 
-  // Display + grounding metadata (image-manager -> fc-mobile contract)
+  // Display + grounding metadata (media-manager -> fc-mobile contract)
   displayMeta?: IFigureDisplayMeta;
 
   // Releases (supports multiple releases/rereleases)
@@ -252,8 +252,8 @@ const FigureSchema = new Schema<IFigure>(
     imageUrl: { type: String },
     imageUrls: { type: [String], default: [] },
 
-    // Display + grounding metadata (image-manager -> fc-mobile contract).
-    // No default: stays undefined until image-manager populates it.
+    // Display + grounding metadata (media-manager -> fc-mobile contract).
+    // No default: stays undefined until media-manager populates it.
     displayMeta: { type: DisplayMetaSchema },
 
     // Releases

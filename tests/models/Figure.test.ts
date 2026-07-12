@@ -356,7 +356,7 @@ describe('Figure Model', () => {
     });
   });
 
-  describe('displayMeta (image-manager -> fc-mobile contract)', () => {
+  describe('displayMeta (media-manager -> fc-mobile contract)', () => {
     // Mirrors fc-shared FigureDisplayMeta exactly: nested object, all fields
     // optional, contactBand a nested {centerXFrac, widthFrac}. Additive only —
     // imageUrl remains the untouched fallback.
