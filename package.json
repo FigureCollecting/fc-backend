@@ -30,7 +30,7 @@
     "@opentelemetry/semantic-conventions": "^1.41.1",
     "@simplewebauthn/browser": "^13.3.0",
     "@simplewebauthn/server": "^13.2.3",
-    "axios": "^1.17.0",
+    "axios": "^1.18.1",
     "bcryptjs": "^3.0.3",
     "cheerio": "^1.1.2",
     "cors": "^2.8.5",
