@@ -23,20 +23,20 @@ ignore:
       not application code. No untrusted glob patterns are processed at runtime.
 
   # Alpine base image CVEs with no fix available
-  # These are in the node:25-alpine base image packages. No patched versions exist yet.
+  # These are in the node:26-alpine base image packages. No patched versions exist yet.
   # Risk is mitigated by: non-root user, network isolation, no untrusted input to affected components.
 
   # busybox CVE-2025-60876 (Medium) - affects busybox, busybox-binsh, ssl_client
   # No fix available in Alpine repositories as of 2026-02-28.
   - vulnerability: CVE-2025-60876
     reason: |
-      Alpine base image (node:25-alpine) package with no fix available.
+      Alpine base image (node:26-alpine) package with no fix available.
       Application runs as non-root user with limited busybox usage.
 
   # zlib CVE-2026-27171 (Medium) - affects zlib 1.3.1-r2
   # No fix available in Alpine repositories as of 2026-02-28.
   - vulnerability: CVE-2026-27171
     reason: |
-      Alpine base image (node:25-alpine) package with no fix available.
+      Alpine base image (node:26-alpine) package with no fix available.
       zlib is used internally by Node.js for HTTP compression.
       Application is not directly exposed to untrusted compressed data.
