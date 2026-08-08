@@ -4,7 +4,7 @@
 # ============================================================================
 # Base Stage - Common foundation for all stages
 # ============================================================================
-FROM node:26-alpine AS base
+FROM node:26.5.1-alpine AS base
 
 # Cache-bust ARG to invalidate Docker layers when security patches are needed
 ARG CACHE_BUST=2026-07-01-npm-undici-cve-fix
@@ -79,7 +79,7 @@ RUN npm run build
 # ============================================================================
 # Production Stage - Optimized runtime image
 # ============================================================================
-FROM node:26-alpine AS production
+FROM node:26.5.1-alpine AS production
 
 # Cache-bust ARG for production stage security patches
 ARG CACHE_BUST=2026-07-01-npm-undici-cve-fix
