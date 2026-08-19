@@ -8,6 +8,7 @@
  * the RPC never reads wall time server-side.
  */
 import express, { Request, Response } from 'express';
+import rateLimit from 'express-rate-limit';
 import { protect } from '../middleware/authMiddleware';
 import {
   createSpineReadClientFromEnv,
@@ -17,6 +18,20 @@ import {
 } from '../services/spineReadClient';
 
 const router = express.Router();
+
+// Rate limiting (CodeQL js/missing-rate-limiting; ratified caller architecture
+// assigns per-user rate-limiting to fc-backend). Mirrors figureRoutes.ts's
+// figureApiLimiter convention exactly, including the test-env skip.
+const isTestEnv = process.env.NODE_ENV === 'test' || process.env.TEST_MODE === 'memory';
+export const compareApiLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: isTestEnv ? 0 : 200, // 0 = disabled in test
+  message: { success: false, message: 'Too many requests, please try again later' },
+  standardHeaders: true,
+  legacyHeaders: false,
+  skip: () => isTestEnv,
+});
+router.use(compareApiLimiter);
 
 const GTIN14_RE = /^\d{14}$/;
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;

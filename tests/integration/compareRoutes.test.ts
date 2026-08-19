@@ -234,3 +234,23 @@ describe('Compare Routes', () => {
     });
   });
 });
+
+// ---------------------------------------------------------------------------
+// Rate limiting (CodeQL js/missing-rate-limiting): the limiter must be wired
+// into the router stack BEFORE protect. Wiring assertion (the limiter itself
+// is test-env-skipped per repo convention, like figureRoutes) — this fails if
+// the middleware is ever removed or reordered behind auth.
+// ---------------------------------------------------------------------------
+describe('rate limiting wiring', () => {
+  it('mounts compareApiLimiter as the first layer, ahead of protect', () => {
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const mod = require('../../src/routes/compareRoutes');
+    const router = mod.default;
+    const stack: Array<{ handle: { name: string } }> = router.stack;
+    const names = stack.map((l) => l.handle.name);
+    const limiterIdx = stack.findIndex((l) => l.handle === mod.compareApiLimiter);
+    const protectIdx = names.indexOf('protect');
+    expect(limiterIdx).toBeGreaterThanOrEqual(0);
+    expect(protectIdx).toBeGreaterThan(limiterIdx);
+  });
+});
