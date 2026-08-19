@@ -7,6 +7,7 @@ import authRoutes from '../../src/routes/authRoutes';
 import adminRoutes, { publicConfigRouter } from '../../src/routes/adminRoutes';
 import lookupRoutes from '../../src/routes/lookupRoutes';
 import listRoutes from '../../src/routes/listRoutes';
+import compareRoutes from '../../src/routes/compareRoutes';
 
 // Create test app
 export const createTestApp = () => {
@@ -25,6 +26,7 @@ export const createTestApp = () => {
   app.use('/admin', adminRoutes);
   app.use('/lookup', lookupRoutes);
   app.use('/lists', listRoutes);
+  app.use('/compare', compareRoutes);
   app.use('/', publicConfigRouter);
 
   // Health check endpoint - updated to match new format
