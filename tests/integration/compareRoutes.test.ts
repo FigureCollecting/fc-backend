@@ -198,4 +198,39 @@ describe('Compare Routes', () => {
       expect(res.body.code).toBe('INVALID_ARGUMENT');
     });
   });
+
+  describe('error message safety (no internal leakage)', () => {
+    it('502 without leaking the internal spine host/port on a connection-level failure (ECONNREFUSED)', async () => {
+      // Nothing listens on 127.0.0.1:1 (a privileged port) -> immediate
+      // ECONNREFUSED at the transport level, wrapped by ConnectError.from
+      // into a raw Node error message that embeds the literal host:port.
+      // That raw message must NEVER reach the authenticated caller.
+      process.env.SPINE_READ_URL = 'http://127.0.0.1:1';
+      process.env.SPINE_READ_TIMEOUT_MS = '2000';
+
+      const res = await request(app)
+        .get(`/compare/by-gtin/${VALID_GTIN14}`)
+        .set('Authorization', `Bearer ${authToken}`);
+
+      expect(res.status).toBe(502);
+      expect(res.body.message).not.toMatch(/127\.0\.0\.1/);
+      expect(res.body.message).not.toMatch(/ECONNREFUSED/i);
+
+      delete process.env.SPINE_READ_TIMEOUT_MS;
+    }, 15000);
+
+    it('502 BAD_UPSTREAM_RESPONSE without leaking the JSON parser message when resultJson is malformed', async () => {
+      stub = await startStub(() => create(CompareResponseSchema, { resultJson: '{not valid json' }));
+      process.env.SPINE_READ_URL = stub.baseUrl;
+
+      const res = await request(app)
+        .get(`/compare/by-gtin/${VALID_GTIN14}`)
+        .set('Authorization', `Bearer ${authToken}`);
+
+      expect(res.status).toBe(502);
+      expect(res.body.code).toBe('BAD_UPSTREAM_RESPONSE');
+      expect(res.body.message).not.toMatch(/JSON/i);
+      expect(res.body.message).not.toMatch(/position/i);
+    });
+  });
 });

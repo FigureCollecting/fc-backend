@@ -68,16 +68,19 @@ async function handleCompare(res: Response, seed: CompareSeed): Promise<Response
   // Minted HERE, per request — the RPC never reads wall time server-side.
   const nowIso = new Date().toISOString();
 
+  let response;
   try {
-    const response = await client.compare(seed, nowIso);
-    // resultJson is the spine's CompareResult as JSON TEXT (read.proto
-    // FIDELITY DOCTRINE) — JSON.parse preserves every string amount
-    // verbatim (a quoted "295" stays the JS string "295", never coerced to
-    // a float). Spread verbatim into the response, plus the asOf echo.
-    const result = JSON.parse(response.resultJson) as Record<string, unknown>;
-    return res.status(200).json({ ...result, asOf: nowIso });
+    response = await client.compare(seed, nowIso);
   } catch (err) {
     const connectError = ConnectError.from(err);
+    // Log server-side ONLY: connectError.rawMessage may be a genuine
+    // RPC-level message from the spine, but it may also be the message of
+    // a raw Node network error (ECONNREFUSED/ENOTFOUND/etc.) that
+    // ConnectError.from() wraps verbatim — which embeds the literal
+    // internal SPINE_READ_URL host:port. Never put rawMessage in the
+    // response body for anything but a deliberate spine-side
+    // InvalidArgument rejection.
+    console.error('[COMPARE] spine RPC failed:', grpcStatusName(connectError.code), connectError.rawMessage);
     if (connectError.code === Code.InvalidArgument) {
       return res.status(400).json({
         success: false,
@@ -87,14 +90,38 @@ async function handleCompare(res: Response, seed: CompareSeed): Promise<Response
     }
     // Unavailable, DeadlineExceeded (the per-call timeout tripped — see
     // DEFAULT_COMPARE_TIMEOUT_MS), and any other infra-shaped fault -> 502
-    // with the connect code surfaced. NEVER a hang: the client always
-    // resolves or rejects within its timeout.
+    // with the connect code surfaced but a fixed, safe message. NEVER a
+    // hang: the client always resolves or rejects within its timeout.
     return res.status(502).json({
       success: false,
       code: grpcStatusName(connectError.code),
-      message: connectError.rawMessage,
+      message: 'upstream spine RPC failed',
     });
   }
+
+  // resultJson is the spine's CompareResult as JSON TEXT (read.proto
+  // FIDELITY DOCTRINE) — JSON.parse preserves every string amount
+  // verbatim (a quoted "295" stays the JS string "295", never coerced to
+  // a float). Spread verbatim into the response, plus the asOf echo.
+  //
+  // Parsed in its OWN try/catch, separate from the RPC call above: a
+  // parse failure here is a LOCAL deserialization bug (malformed
+  // resultJson from the spine), not an RPC fault, and must never be
+  // conflated with the ConnectError codes/handling above nor leak the
+  // parser's raw message (which can echo fragments of the upstream
+  // payload back to the caller).
+  let result: Record<string, unknown>;
+  try {
+    result = JSON.parse(response.resultJson) as Record<string, unknown>;
+  } catch (err) {
+    console.error('[COMPARE] malformed resultJson from spine:', (err as Error).message);
+    return res.status(502).json({
+      success: false,
+      code: 'BAD_UPSTREAM_RESPONSE',
+      message: 'spine returned a malformed result',
+    });
+  }
+  return res.status(200).json({ ...result, asOf: nowIso });
 }
 
 export default router;
