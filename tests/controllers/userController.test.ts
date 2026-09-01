@@ -103,6 +103,7 @@ describe('UserController', () => {
         _id: 'user123',
         username: 'testuser',
         email: 'test@example.com',
+        password: 'oldpassword',
         isAdmin: false,
         save: jest.fn().mockResolvedValue({
           _id: 'user123',

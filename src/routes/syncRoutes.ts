@@ -650,7 +650,8 @@ router.get('/stream/:sessionId', protect, async (req, res) => {
   // Verify the user owns this sync job
   const job = await SyncJob.findOne({ sessionId, userId });
   if (!job) {
-    return res.status(404).json({ success: false, message: 'SyncJob not found' });
+    res.status(404).json({ success: false, message: 'SyncJob not found' });
+    return;
   }
 
   // Set up SSE headers

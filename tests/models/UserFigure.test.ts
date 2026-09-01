@@ -44,7 +44,7 @@ describe('UserFigure Model', () => {
     it('should require userId field', async () => {
       const userFigureData = {
         mfcItemId,
-        collectionStatus: 'owned'
+        collectionStatus: 'owned' as const
       };
 
       await expect(UserFigure.create(userFigureData)).rejects.toThrow();
@@ -53,7 +53,7 @@ describe('UserFigure Model', () => {
     it('should require mfcItemId field', async () => {
       const userFigureData = {
         userId,
-        collectionStatus: 'owned'
+        collectionStatus: 'owned' as const
       };
 
       await expect(UserFigure.create(userFigureData)).rejects.toThrow();
@@ -75,7 +75,7 @@ describe('UserFigure Model', () => {
         collectionStatus: 'invalid_status'
       };
 
-      await expect(UserFigure.create(userFigureData)).rejects.toThrow();
+      await expect(UserFigure.create(userFigureData as any)).rejects.toThrow();
     });
 
     it('should enforce unique userId+mfcItemId combination', async () => {
@@ -103,7 +103,7 @@ describe('UserFigure Model', () => {
 
     it('should accept all valid status values', async () => {
       // Create unique MFCItems for each test
-      const statuses = ['owned', 'wished', 'ordered', 'preordered'];
+      const statuses = ['owned', 'wished', 'ordered', 'preordered'] as const;
 
       for (let i = 0; i < statuses.length; i++) {
         const mfcItem = await MFCItem.create({
@@ -367,7 +367,7 @@ describe('UserFigure Model', () => {
     });
 
     it('should accept all valid condition values', async () => {
-      const conditions = ['mint', 'good', 'fair', 'poor'];
+      const conditions = ['mint', 'good', 'fair', 'poor'] as const;
 
       for (let i = 0; i < conditions.length; i++) {
         const mfcItem = await MFCItem.create({
@@ -398,7 +398,7 @@ describe('UserFigure Model', () => {
         userId,
         mfcItemId: mfcItem._id,
         collectionStatus: 'owned',
-        condition: 'invalid'
+        condition: 'invalid' as any
       })).rejects.toThrow();
     });
   });

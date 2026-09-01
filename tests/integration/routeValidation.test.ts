@@ -295,7 +295,7 @@ describe('Route Validation and Error Handling', () => {
           }));
 
           const hasPageError = errorDetails.some(
-            err => err.message.toLowerCase().includes('page') || 
+            (err: any) => err.message.toLowerCase().includes('page') || 
                    err.path.toLowerCase().includes('page') || 
                    err.message.toLowerCase().includes('invalid')
           );
@@ -323,7 +323,7 @@ describe('Route Validation and Error Handling', () => {
           }));
 
           const hasLimitError = errorDetails.some(
-            err => err.message.toLowerCase().includes('limit') || 
+            (err: any) => err.message.toLowerCase().includes('limit') || 
                    err.path.toLowerCase().includes('limit') || 
                    err.message.toLowerCase().includes('between 1 and 100')
           );
@@ -348,11 +348,11 @@ describe('Route Validation and Error Handling', () => {
         }));
 
         const hasPageError = errorDetails.some(
-          err => err.message.toLowerCase().includes('page') || 
+          (err: any) => err.message.toLowerCase().includes('page') || 
                  err.path.toLowerCase().includes('page')
         );
         const hasLimitError = errorDetails.some(
-          err => err.message.toLowerCase().includes('limit') || 
+          (err: any) => err.message.toLowerCase().includes('limit') || 
                  err.path.toLowerCase().includes('limit')
         );
         expect(hasPageError).toBe(true);

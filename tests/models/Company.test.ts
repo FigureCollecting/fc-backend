@@ -46,7 +46,7 @@ describe('Company Model', () => {
 
     it('should require name field', async () => {
       const companyData = {
-        category: 'company',
+        category: 'company' as const,
         subType: manufacturerRoleId
       };
 
@@ -65,7 +65,7 @@ describe('Company Model', () => {
     it('should require subType field', async () => {
       const companyData = {
         name: 'Test Company',
-        category: 'company'
+        category: 'company' as const
       };
 
       await expect(Company.create(companyData)).rejects.toThrow();
@@ -78,7 +78,7 @@ describe('Company Model', () => {
         subType: manufacturerRoleId
       };
 
-      await expect(Company.create(companyData)).rejects.toThrow();
+      await expect(Company.create(companyData as any)).rejects.toThrow();
     });
 
     it('should enforce unique name+category+subType combination', async () => {

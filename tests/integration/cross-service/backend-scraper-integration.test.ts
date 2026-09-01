@@ -23,7 +23,7 @@ describe('Backend → Scraper Integration Tests', () => {
         headers: { Authorization: `Bearer ${userToken}` }
       });
       console.log('🔄 Browser pool reset for scraper tests');
-    } catch (error) {
+    } catch (error: any) {
       console.warn('⚠️  Could not reset browser pool:', error.message);
     }
   });
@@ -341,7 +341,7 @@ describe('Backend → Scraper Integration Tests', () => {
       // Send concurrent requests
       const promises = urls.map(url => 
         authenticatedAPI.post('/figures/scrape-mfc', { mfcLink: url })
-          .catch(error => ({ error: true, status: error.response?.status }))
+          .catch((error: any) => ({ error: true, status: error.response?.status }))
       );
 
       const responses = await Promise.all(promises);

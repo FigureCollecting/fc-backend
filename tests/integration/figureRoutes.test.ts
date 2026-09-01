@@ -912,12 +912,7 @@ describe('Figure Routes Integration', () => {
         expect(response.body.success).toBe(true);
         expect(response.body.total).toBe(scenario.expectedTotal);
         
-        if (scenario.expectedName) {
-          expect(response.body.data[0].name).toBe(scenario.expectedName);
-        } else if (scenario.expectedNames) {
-          const names = response.body.data.map((fig: any) => fig.name);
-          expect(names).toEqual(expect.arrayContaining(scenario.expectedNames));
-        }
+        expect(response.body.data[0].name).toBe(scenario.expectedName);
       }
     });
 
