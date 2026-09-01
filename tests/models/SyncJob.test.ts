@@ -35,7 +35,7 @@ describe('SyncJob Model', () => {
       const validPhases = [
         'validating', 'exporting', 'parsing', 'fetching_lists',
         'queueing', 'enriching', 'completed', 'failed', 'cancelled'
-      ];
+      ] as const;
 
       for (const phase of validPhases) {
         const job = await SyncJob.create({
@@ -98,7 +98,7 @@ describe('SyncJob Model', () => {
 
   describe('isActive method', () => {
     it('should return true for active phases', async () => {
-      const activePhases = ['validating', 'exporting', 'parsing', 'fetching_lists', 'queueing', 'enriching'];
+      const activePhases = ['validating', 'exporting', 'parsing', 'fetching_lists', 'queueing', 'enriching'] as const;
 
       for (const phase of activePhases) {
         const job = await SyncJob.create({
@@ -111,7 +111,7 @@ describe('SyncJob Model', () => {
     });
 
     it('should return false for terminal phases', async () => {
-      const terminalPhases = ['completed', 'failed', 'cancelled'];
+      const terminalPhases = ['completed', 'failed', 'cancelled'] as const;
 
       for (const phase of terminalPhases) {
         const job = await SyncJob.create({

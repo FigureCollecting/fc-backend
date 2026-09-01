@@ -173,7 +173,7 @@ describe('StaleSessionMonitor', () => {
     });
 
     it('should handle jobs in any active phase (not just enriching)', async () => {
-      const activePhases = ['validating', 'exporting', 'parsing', 'fetching_lists', 'queueing', 'enriching'];
+      const activePhases = ['validating', 'exporting', 'parsing', 'fetching_lists', 'queueing', 'enriching'] as const;
 
       for (const phase of activePhases) {
         await SyncJob.create({

@@ -66,7 +66,7 @@ describe('SearchIndex Model', () => {
 
     it('should require entityId field', async () => {
       const searchData = {
-        entityType: 'figure',
+        entityType: 'figure' as const,
         searchText: 'Test search text',
         nameSearchable: 'test'
       };
@@ -76,7 +76,7 @@ describe('SearchIndex Model', () => {
 
     it('should require searchText field', async () => {
       const searchData = {
-        entityType: 'figure',
+        entityType: 'figure' as const,
         entityId: mfcItemId,
         nameSearchable: 'test'
       };
@@ -86,7 +86,7 @@ describe('SearchIndex Model', () => {
 
     it('should require nameSearchable field', async () => {
       const searchData = {
-        entityType: 'figure',
+        entityType: 'figure' as const,
         entityId: mfcItemId,
         searchText: 'Test search text'
       };
@@ -102,7 +102,7 @@ describe('SearchIndex Model', () => {
         nameSearchable: 'test'
       };
 
-      await expect(SearchIndex.create(searchData)).rejects.toThrow();
+      await expect(SearchIndex.create(searchData as any)).rejects.toThrow();
     });
 
     it('should enforce unique entityType+entityId combination', async () => {

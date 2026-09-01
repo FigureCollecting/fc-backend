@@ -239,7 +239,7 @@ describe('End-to-End Workflow Tests', () => {
     test('Database consistency across service operations', async () => {
       console.log('🔄 Testing database consistency across operations...');
       
-      const mongoClient = getMongoClient();
+      const mongoClient = await getMongoClient();
       const db = mongoClient.db('figure_collector_test');
       
       // Get initial counts

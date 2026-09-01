@@ -35,7 +35,7 @@ describe('RoleType Model', () => {
 
     it('should require name field', async () => {
       const roleData = {
-        kind: 'company',
+        kind: 'company' as const,
         displayOrder: 1,
         isSystem: true
       };
@@ -61,7 +61,7 @@ describe('RoleType Model', () => {
         isSystem: true
       };
 
-      await expect(RoleType.create(roleData)).rejects.toThrow();
+      await expect(RoleType.create(roleData as any)).rejects.toThrow();
     });
 
     it('should enforce unique name+kind combination', async () => {
