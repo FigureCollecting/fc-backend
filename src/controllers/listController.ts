@@ -377,7 +377,7 @@ export const addItemsToList = async (req: Request, res: Response) => {
     const updated = await MfcList.findByIdAndUpdate(
       req.params.id,
       { $addToSet: { itemMfcIds: { $each: mfcIds } } },
-      { new: true }
+      { returnDocument: 'after' }
     );
 
     if (updated) {
@@ -436,7 +436,7 @@ export const removeItemsFromList = async (req: Request, res: Response) => {
     const updated = await MfcList.findByIdAndUpdate(
       req.params.id,
       { $pullAll: { itemMfcIds: mfcIds } },
-      { new: true }
+      { returnDocument: 'after' }
     );
 
     if (updated) {
@@ -497,7 +497,7 @@ export const syncLists = async (req: Request, res: Response) => {
             lastSyncedAt: new Date()
           }
         },
-        { upsert: true, new: true }
+        { upsert: true, returnDocument: 'after' }
       );
 
       upsertCount++;

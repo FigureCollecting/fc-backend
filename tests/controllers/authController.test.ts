@@ -594,7 +594,7 @@ describe('AuthController', () => {
       expect(MockedUser.findByIdAndUpdate).toHaveBeenCalledWith(
         'user123',
         { colorProfile: 'terminal' },
-        { new: true, runValidators: true }
+        { returnDocument: 'after', runValidators: true }
       );
       expect(mockResponse.status).toHaveBeenCalledWith(200);
       expect(mockResponse.json).toHaveBeenCalledWith({
@@ -687,7 +687,7 @@ describe('AuthController', () => {
       expect(MockedUser.findByIdAndUpdate).toHaveBeenCalledWith(
         'user123',
         {},
-        { new: true, runValidators: true }
+        { returnDocument: 'after', runValidators: true }
       );
       expect(mockResponse.status).toHaveBeenCalledWith(200);
     });

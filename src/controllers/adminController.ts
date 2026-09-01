@@ -210,7 +210,7 @@ export const upsertConfig = async (req: Request, res: Response): Promise<Respons
     const config = await SystemConfig.findOneAndUpdate(
       { key },
       { $set: updateData, $setOnInsert: { key } },
-      { new: true, upsert: true, runValidators: true }
+      { returnDocument: 'after', upsert: true, runValidators: true }
     ).select('-__v');
 
     const isNew = !config.createdAt || config.createdAt.getTime() === config.updatedAt.getTime();

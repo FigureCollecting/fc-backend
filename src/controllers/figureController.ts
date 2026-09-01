@@ -1011,7 +1011,7 @@ export const updateFigure = async (req: Request, res: Response) => {
         type: type !== undefined ? type : figure.type,
         description: description !== undefined ? description : figure.description
       },
-      { new: true }
+      { returnDocument: 'after' }
     );
 
     // Sync search index (fire-and-forget)

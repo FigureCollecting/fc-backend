@@ -616,7 +616,7 @@ router.post('/webhook/lists-sync', async (req, res) => {
             lastSyncedAt: new Date()
           }
         },
-        { upsert: true, new: true }
+        { upsert: true, returnDocument: 'after' }
       );
 
       upsertCount++;

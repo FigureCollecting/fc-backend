@@ -76,7 +76,7 @@ describe('applyScrapedData', () => {
           }),
           $setOnInsert: { userId }
         },
-        { upsert: true, new: true }
+        { upsert: true, returnDocument: 'after' }
       );
       expect(result.figure).toBe(fakeFigure);
     });
