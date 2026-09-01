@@ -66,24 +66,3 @@ ignore:
     reason: |
       Node's bundled-npm internal (via npm's socks-proxy-agent chain); app dep fixed at 10.4.0.
       Not runtime-reachable.
-
-  # CVE-2026-14456: OpenSSL (libcrypto3/libssl3 3.5.7-r0) in the node alpine
-  # base image OS layer — NOT an application dependency. ADDED 2026-08-19.
-  # No fixed apk exists (apk policy libssl3 offers only 3.5.7-r0, alpine v3.24
-  # main, checked 2026-08-19). EPSS 0.5% (38th pctile). Same dated ignore as
-  # fc-aggregation (its PR #58). REMOVE at the next base-image bump once a
-  # fixed openssl ships — delete BOTH entries.
-  - vulnerability: CVE-2026-14456
-    package:
-      name: libcrypto3
-      type: apk
-    reason: |
-      Base-image OS package; no fixed apk released as of 2026-08-19. Dated
-      ignore per estate policy — remove on the next base bump with a fix.
-  - vulnerability: CVE-2026-14456
-    package:
-      name: libssl3
-      type: apk
-    reason: |
-      Base-image OS package; no fixed apk released as of 2026-08-19. Dated
-      ignore per estate policy — remove on the next base bump with a fix.
