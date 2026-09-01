@@ -10,7 +10,12 @@
     "noImplicitReturns": true,
     "noFallthroughCasesInSwitch": true,
     "skipLibCheck": true,
-    "types": ["jest", "node"]
+    "types": [
+      "jest",
+      "node"
+    ],
+    "rootDir": ".",
+    "noEmit": true
   },
   "include": [
     "src/**/__tests__/**/*",
@@ -20,5 +25,7 @@
     "src/types/**/*.d.ts",
     "tests/**/*.ts"
   ],
-  "exclude": ["node_modules"]
+  "exclude": [
+    "node_modules"
+  ]
 }
