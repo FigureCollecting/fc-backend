@@ -42,6 +42,14 @@ const DIMENSION_TOKEN = /([a-z]{1,12})\s*=\s*(\d+(?:\.\d+)?)\s*(mm|cm|in(?:ch(?:
 const SCALE_PATTERN = /(\d{1,4}\/\d{1,4})/;
 
 /**
+ * Physical sanity ceiling in millimeters. Nothing real is taller than this — a
+ * 1/1-scale figure is ~1700mm, so 2500mm leaves ample margin. Any parsed
+ * measurement above it is dropped: defense-in-depth so a malformed or
+ * concatenated value (e.g. the old 250210470 dimension bug) can never be stored.
+ */
+const MAX_DIMENSION_MM = 2500;
+
+/**
  * Convert a measurement to millimeters based on its unit label. Unknown or
  * absent units are assumed to already be millimeters (MFC's overwhelming
  * default). Rounds to 2 decimals so unit conversion does not introduce
@@ -80,7 +88,11 @@ export function parseDimensionsString(raw: string): IDimensions | null {
     if (!field || result[field] !== undefined) {
       continue;
     }
-    result[field] = toMillimeters(parseFloat(match[2]), match[3]);
+    const mm = toMillimeters(parseFloat(match[2]), match[3]);
+    if (mm > MAX_DIMENSION_MM) {
+      continue; // physically impossible — drop it rather than store garbage
+    }
+    result[field] = mm;
   }
 
   // Extract scale from patterns like 1/6, 1/7, 1/8.

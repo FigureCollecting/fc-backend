@@ -13,119 +13,9 @@ import express, { Response } from 'express';
 import crypto from 'crypto';
 import { protect } from '../middleware/authMiddleware';
 import rateLimit from 'express-rate-limit';
-import { SyncJob, ISyncJob, SyncItemStatus, Figure, Company, Artist, RoleType, MfcList, MFCItem } from '../models';
-import mongoose from 'mongoose';
+import { SyncJob, ISyncJob, SyncItemStatus, MfcList } from '../models';
 import { syncLogger } from '../utils/logger';
-import { upsertFigureSearchIndex } from '../services/searchIndexService';
-import { parseDimensionsString } from '../utils/parseDimensions';
-
-// Interface for scraped company/artist data from scraper
-interface IScrapedCompany {
-  name: string;
-  role: string;
-  mfcId?: number;
-}
-
-interface IScrapedArtist {
-  name: string;
-  role: string;
-  mfcId?: number;
-}
-
-/**
- * Process scraped companies and return companyRoles array for Figure
- *
- * Note: Company model has subType (role) as part of its identity.
- * Same company name with different roles creates separate Company records.
- */
-async function processScrapedCompanies(
-  companies: IScrapedCompany[]
-): Promise<{ companyRoles: any[]; manufacturer?: string }> {
-  const companyRoles: any[] = [];
-  let manufacturer: string | undefined;
-
-  for (const company of companies) {
-    // Look up RoleType first - it's required for Company creation
-    const roleType = await RoleType.findOne({ name: company.role, kind: 'company' });
-
-    let companyDoc;
-    if (roleType) {
-      // Upsert Company by name + subType (role)
-      // Company model uses {name, category, subType} as unique key
-      companyDoc = await Company.findOneAndUpdate(
-        { name: company.name, category: 'company', subType: roleType._id },
-        {
-          $set: { name: company.name, category: 'company', subType: roleType._id },
-          $setOnInsert: { mfcId: company.mfcId }
-        },
-        { upsert: true, new: true }
-      );
-    } else {
-      // Unknown role type - try to find existing company by name only
-      // Don't create new Company without valid subType
-      companyDoc = await Company.findOne({ name: company.name });
-    }
-
-    // Build companyRole entry
-    const companyRole: any = {
-      companyName: company.name,
-      roleName: company.role
-    };
-    if (companyDoc) {
-      companyRole.companyId = companyDoc._id;
-    }
-    if (roleType) {
-      companyRole.roleId = roleType._id;
-    }
-
-    companyRoles.push(companyRole);
-
-    // Set legacy manufacturer from first Manufacturer role
-    if (!manufacturer && company.role === 'Manufacturer') {
-      manufacturer = company.name;
-    }
-  }
-
-  return { companyRoles, manufacturer };
-}
-
-/**
- * Process scraped artists and return artistRoles array for Figure
- */
-async function processScrapedArtists(
-  artists: IScrapedArtist[]
-): Promise<any[]> {
-  const artistRoles: any[] = [];
-
-  for (const artist of artists) {
-    // Upsert Artist by name
-    const artistDoc = await Artist.findOneAndUpdate(
-      { name: artist.name },
-      {
-        $set: { name: artist.name },
-        $setOnInsert: { mfcId: artist.mfcId }
-      },
-      { upsert: true, new: true }
-    );
-
-    // Look up RoleType by name
-    const roleType = await RoleType.findOne({ name: artist.role, kind: 'artist' });
-
-    // Build artistRole entry
-    const artistRole: any = {
-      artistId: artistDoc._id,
-      artistName: artist.name,
-      roleName: artist.role
-    };
-    if (roleType) {
-      artistRole.roleId = roleType._id;
-    }
-
-    artistRoles.push(artistRole);
-  }
-
-  return artistRoles;
-}
+import { applyScrapedData } from '../services/applyScrapedData';
 
 const router = express.Router();
 
@@ -517,117 +407,18 @@ router.post('/webhook/item-complete', async (req, res) => {
         // Get the item from the job to find its collection status, activity order, and orphan flag
         const jobItem = job.items.find((i: { mfcId: string }) => i.mfcId === mfcId);
 
-        // Orphan items (from lists, not in collection) only get MFCItem catalog enrichment.
-        // They do NOT get a user-specific Figure record.
-        if (!jobItem?.isOrphan) {
-          const collectionStatus = jobItem?.collectionStatus || 'owned';
+        // Delegate the DB-write effects (Figure upsert, MFCItem catalog upsert,
+        // fire-and-forget search-index sync) to the unified applyScrapedData
+        // function, shared with the future reprocess path.
+        const { figure } = await applyScrapedData(mfcId, scrapedData, job.userId, {
+          collectionStatus: jobItem?.collectionStatus || 'owned',
+          mfcActivityOrder: jobItem?.mfcActivityOrder,
+          isOrphan: jobItem?.isOrphan
+        });
 
-          // Map scraped data to Figure schema
-          const figureData: Record<string, unknown> = {
-            mfcId: parseInt(mfcId, 10),
-            mfcLink: `https://myfigurecollection.net/item/${mfcId}`,
-            collectionStatus,
-          };
-
-          // Activity ordering from MFC collection page sort
-          if (jobItem?.mfcActivityOrder !== undefined) {
-            figureData.mfcActivityOrder = jobItem.mfcActivityOrder;
-          }
-          // Add optional fields from scraped data
-          if (scrapedData.name) figureData.name = scrapedData.name;
-          if (scrapedData.manufacturer) figureData.manufacturer = scrapedData.manufacturer;
-          if (scrapedData.scale) figureData.scale = scrapedData.scale;
-          if (scrapedData.imageUrl) figureData.imageUrl = scrapedData.imageUrl;
-          if (scrapedData.description) figureData.description = scrapedData.description;
-          if (scrapedData.releases) figureData.releases = scrapedData.releases;
-          if (scrapedData.jan) figureData.jan = scrapedData.jan;
-
-          // Schema v3: Individual MFC fields
-          if (scrapedData.mfcTitle) figureData.mfcTitle = scrapedData.mfcTitle;
-          if (scrapedData.origin) figureData.origin = scrapedData.origin;
-          if (scrapedData.version) figureData.version = scrapedData.version;
-          if (scrapedData.category) figureData.category = scrapedData.category;
-          if (scrapedData.classification) figureData.classification = scrapedData.classification;
-          if (scrapedData.materials) figureData.materials = scrapedData.materials;
-          if (scrapedData.dimensions && typeof scrapedData.dimensions === 'string') {
-            const parsed = parseDimensionsString(scrapedData.dimensions as string);
-            if (parsed) {
-              figureData.dimensions = parsed;
-            }
-          }
-          if (scrapedData.tags && Array.isArray(scrapedData.tags)) {
-            figureData.tags = scrapedData.tags;
-          }
-
-          // User's personal ratings (only present when logged-in user has the figure)
-          if (scrapedData.userScore && typeof scrapedData.userScore === 'number') {
-            figureData.rating = scrapedData.userScore;
-          }
-          if (scrapedData.userWishRating && typeof scrapedData.userWishRating === 'number') {
-            figureData.wishRating = scrapedData.userWishRating;
-          }
-
-          // Schema v3: Process companies with roles
-          if (scrapedData.companies && Array.isArray(scrapedData.companies) && scrapedData.companies.length > 0) {
-            const { companyRoles, manufacturer } = await processScrapedCompanies(
-              scrapedData.companies as IScrapedCompany[]
-            );
-            figureData.companyRoles = companyRoles;
-
-            // Set legacy manufacturer from companies if not already set
-            if (!figureData.manufacturer && manufacturer) {
-              figureData.manufacturer = manufacturer;
-            }
-            console.log(`[WEBHOOK] Processed ${companyRoles.length} company roles for ${JSON.stringify(mfcId)}`);
-          }
-
-          // Schema v3: Process artists with roles
-          if (scrapedData.artists && Array.isArray(scrapedData.artists) && scrapedData.artists.length > 0) {
-            const artistRoles = await processScrapedArtists(
-              scrapedData.artists as IScrapedArtist[]
-            );
-            figureData.artistRoles = artistRoles;
-            console.log(`[WEBHOOK] Processed ${artistRoles.length} artist roles for ${JSON.stringify(mfcId)}`);
-          }
-
-          // Upsert: Update if exists for this user+mfcId, otherwise create
-          const result = await Figure.findOneAndUpdate(
-            { userId: job.userId, mfcId: parseInt(mfcId, 10) },
-            { $set: figureData, $setOnInsert: { userId: job.userId } },
-            { upsert: true, new: true }
-          );
-
-          // Sync search index (fire-and-forget)
-          upsertFigureSearchIndex(result).catch(() => {});
-
-          console.log(`[WEBHOOK] Figure ${JSON.stringify(mfcId)} saved/updated: ${result._id}`);
+        if (figure) {
           syncLogger.itemSaved(sessionId, mfcId);
-        } else {
-          console.log(`[WEBHOOK] Orphan item ${JSON.stringify(mfcId)} — enriching MFCItem catalog only (no Figure)`);
         }
-
-        // Upsert shared MFCItem catalog entry — runs for ALL items (collection + orphans)
-        const catalogData: Record<string, unknown> = {
-          mfcId: parseInt(mfcId, 10),
-          mfcUrl: `https://myfigurecollection.net/item/${mfcId}`,
-        };
-        if (scrapedData.name) catalogData.name = scrapedData.name;
-        if (scrapedData.scale) catalogData.scale = scrapedData.scale;
-        if (scrapedData.imageUrl) catalogData.imageUrls = [scrapedData.imageUrl];
-        if (scrapedData.tags) catalogData.tags = scrapedData.tags;
-        if (scrapedData.releases) catalogData.releases = scrapedData.releases;
-        if (scrapedData.companies) catalogData.companies = scrapedData.companies;
-        if (scrapedData.artists) catalogData.artists = scrapedData.artists;
-        if (scrapedData.dimensions) catalogData.dimensions = scrapedData.dimensions;
-        if (scrapedData.communityStats) catalogData.communityStats = scrapedData.communityStats;
-        if (scrapedData.relatedItems) catalogData.relatedItems = scrapedData.relatedItems;
-        catalogData.lastScrapedAt = new Date();
-
-        MFCItem.findOneAndUpdate(
-          { mfcId: parseInt(mfcId, 10) },
-          { $set: catalogData },
-          { upsert: true }
-        ).catch(() => {});
       } catch (saveError: any) {
         console.error(`[WEBHOOK] Failed to save figure ${JSON.stringify(mfcId)}: ${JSON.stringify(saveError.message)}`);
         syncLogger.itemFailed(sessionId, mfcId, 'save_error', saveError.message);

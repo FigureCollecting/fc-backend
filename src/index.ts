@@ -14,6 +14,7 @@ import adminRoutes, { publicConfigRouter } from './routes/adminRoutes';
 import syncRoutes from './routes/syncRoutes';
 import lookupRoutes from './routes/lookupRoutes';
 import listRoutes from './routes/listRoutes';
+import compareRoutes from './routes/compareRoutes';
 import { connectDB } from './config/db';
 import { globalErrorHandler } from './middleware/validationMiddleware';
 import * as packageJson from '../package.json';
@@ -53,6 +54,7 @@ app.use('/admin', adminRoutes);
 app.use('/sync', syncRoutes);
 app.use('/lookup', lookupRoutes);
 app.use('/lists', listRoutes);
+app.use('/compare', compareRoutes);
 app.use('/', publicConfigRouter);
 
 // Health check endpoint - validates MongoDB connection

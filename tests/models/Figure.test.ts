@@ -355,4 +355,75 @@ describe('Figure Model', () => {
       expect(figures[2].name).toBe('Megumin');
     });
   });
+
+  describe('displayMeta (media-manager -> fc-mobile contract)', () => {
+    // Mirrors fc-shared FigureDisplayMeta exactly: nested object, all fields
+    // optional, contactBand a nested {centerXFrac, widthFrac}. Additive only —
+    // imageUrl remains the untouched fallback.
+    it('round-trips a fully-populated nested displayMeta through the database', async () => {
+      const figure = new Figure({
+        name: 'Hatsune Miku',
+        manufacturer: 'Good Smile Company',
+        userId: testUserId,
+        imageUrl: 'https://example.com/source.jpg',
+        displayMeta: {
+          matted: true,
+          matteImageId: 'img-abc123',
+          matteVersionId: 'v-7',
+          bottomMarginFrac: 0.0421,
+          contactBand: { centerXFrac: 0.52, widthFrac: 0.31 },
+          thumbhash: 'L6Pj0^jE.AyE_3t7t7R**0o#DgR4',
+          dominantColor: '#8899AA'
+        }
+      });
+      await figure.save();
+
+      const reloaded = await Figure.findById(figure._id);
+      expect(reloaded?.displayMeta).toBeDefined();
+      expect(reloaded?.displayMeta?.matted).toBe(true);
+      expect(reloaded?.displayMeta?.matteImageId).toBe('img-abc123');
+      expect(reloaded?.displayMeta?.matteVersionId).toBe('v-7');
+      expect(reloaded?.displayMeta?.bottomMarginFrac).toBeCloseTo(0.0421);
+      expect(reloaded?.displayMeta?.contactBand?.centerXFrac).toBeCloseTo(0.52);
+      expect(reloaded?.displayMeta?.contactBand?.widthFrac).toBeCloseTo(0.31);
+      expect(reloaded?.displayMeta?.thumbhash).toBe('L6Pj0^jE.AyE_3t7t7R**0o#DgR4');
+      expect(reloaded?.displayMeta?.dominantColor).toBe('#8899AA');
+      // Additive: the original source image URL is preserved untouched.
+      expect(reloaded?.imageUrl).toBe('https://example.com/source.jpg');
+    });
+
+    it('persists a partial displayMeta, leaving unset fields undefined (each field independently optional)', async () => {
+      const figure = new Figure({
+        name: 'Kagamine Rin',
+        manufacturer: 'Good Smile Company',
+        userId: testUserId,
+        displayMeta: {
+          thumbhash: 'L6Pj0^jE.AyE_3t7t7R**0o#DgR4',
+          dominantColor: '#112233'
+        }
+      });
+      await figure.save();
+
+      const reloaded = await Figure.findById(figure._id);
+      expect(reloaded?.displayMeta?.thumbhash).toBe('L6Pj0^jE.AyE_3t7t7R**0o#DgR4');
+      expect(reloaded?.displayMeta?.dominantColor).toBe('#112233');
+      expect(reloaded?.displayMeta?.matted).toBeUndefined();
+      expect(reloaded?.displayMeta?.matteImageId).toBeUndefined();
+      expect(reloaded?.displayMeta?.contactBand).toBeUndefined();
+    });
+
+    it('saves a Figure with no displayMeta at all, preserving imageUrl (backward compatible)', async () => {
+      const figure = new Figure({
+        name: 'Megumin',
+        manufacturer: 'Good Smile Company',
+        userId: testUserId,
+        imageUrl: 'https://example.com/legacy.jpg'
+      });
+      await figure.save();
+
+      const reloaded = await Figure.findById(figure._id);
+      expect(reloaded?.displayMeta).toBeUndefined();
+      expect(reloaded?.imageUrl).toBe('https://example.com/legacy.jpg');
+    });
+  });
 });
