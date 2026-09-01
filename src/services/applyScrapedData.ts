@@ -56,7 +56,7 @@ async function processScrapedCompanies(
           $set: { name: company.name, category: 'company', subType: roleType._id },
           $setOnInsert: { mfcId: company.mfcId }
         },
-        { upsert: true, new: true }
+        { upsert: true, returnDocument: 'after' }
       );
     } else {
       // Unknown role type - try to find existing company by name only
@@ -103,7 +103,7 @@ async function processScrapedArtists(
         $set: { name: artist.name },
         $setOnInsert: { mfcId: artist.mfcId }
       },
-      { upsert: true, new: true }
+      { upsert: true, returnDocument: 'after' }
     );
 
     // Look up RoleType by name
@@ -242,7 +242,7 @@ export async function applyScrapedData(
     figure = await Figure.findOneAndUpdate(
       { userId, mfcId: parseInt(mfcId, 10) },
       { $set: figureData, $setOnInsert: { userId } },
-      { upsert: true, new: true }
+      { upsert: true, returnDocument: 'after' }
     );
 
     // Sync search index (fire-and-forget)

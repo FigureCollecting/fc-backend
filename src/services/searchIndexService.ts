@@ -74,7 +74,7 @@ export async function upsertFigureSearchIndex(figure: IFigure): Promise<void> {
     await SearchIndex.findOneAndUpdate(
       { entityType: 'figure', entityId: figure._id },
       { $set: buildSetPayload(figure) },
-      { upsert: true, new: true }
+      { upsert: true, returnDocument: 'after' }
     );
   } catch (error) {
     logger.error('Failed to upsert figure search index:', error instanceof Error ? error.message : 'Unknown error');

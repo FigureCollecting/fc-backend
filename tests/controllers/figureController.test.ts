@@ -361,7 +361,7 @@ describe('FigureController', () => {
           name: 'Updated Name',
           scale: '1/7'
         }),
-        { new: true }
+        { returnDocument: 'after' }
       );
       expect(mockResponse.status).toHaveBeenCalledWith(200);
       expect(mockResponse.json).toHaveBeenCalledWith({
@@ -1641,7 +1641,7 @@ describe('FigureController', () => {
         expect.objectContaining({
           manufacturer: 'Derived Mfr'
         }),
-        { new: true }
+        { returnDocument: 'after' }
       );
     });
 
@@ -1675,7 +1675,7 @@ describe('FigureController', () => {
         expect.objectContaining({
           imageUrl: 'https://existing.com/image.jpg'
         }),
-        { new: true }
+        { returnDocument: 'after' }
       );
     });
 
@@ -1714,7 +1714,7 @@ describe('FigureController', () => {
             })
           ])
         }),
-        { new: true }
+        { returnDocument: 'after' }
       );
     });
 
@@ -1755,7 +1755,7 @@ describe('FigureController', () => {
             })
           ])
         }),
-        { new: true }
+        { returnDocument: 'after' }
       );
     });
 
@@ -1812,7 +1812,7 @@ describe('FigureController', () => {
           name: 'Scraped Name',
           scale: '1/7'
         }),
-        { new: true }
+        { returnDocument: 'after' }
       );
     });
 
@@ -1853,7 +1853,7 @@ describe('FigureController', () => {
             })
           ])
         }),
-        { new: true }
+        { returnDocument: 'after' }
       );
     });
 

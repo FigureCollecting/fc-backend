@@ -490,7 +490,7 @@ export const updateProfile = async (req: Request, res: Response): Promise<Respon
     const user = await User.findByIdAndUpdate(
       req.user.id,
       updateData,
-      { new: true, runValidators: true }
+      { returnDocument: 'after', runValidators: true }
     ).select('-password');
 
     if (!user) {

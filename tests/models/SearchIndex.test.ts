@@ -362,7 +362,7 @@ describe('SearchIndex Model', () => {
             popularity: 100
           }
         },
-        { upsert: true, new: true }
+        { upsert: true, returnDocument: 'after' }
       );
 
       let entry = await SearchIndex.findOne({ entityType: 'figure', entityId: mfcItem._id });
@@ -378,7 +378,7 @@ describe('SearchIndex Model', () => {
             popularity: 200
           }
         },
-        { upsert: true, new: true }
+        { upsert: true, returnDocument: 'after' }
       );
 
       entry = await SearchIndex.findOne({ entityType: 'figure', entityId: mfcItem._id });
