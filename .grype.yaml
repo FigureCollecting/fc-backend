@@ -1,68 +1,22 @@
 # Grype vulnerability scanning configuration
 # See: https://github.com/anchore/grype#specifying-matches-to-ignore
+#
+# 2026-09-01: pruned 6 moot ignores after pinning npm@11.19.1 EXACTLY in the
+# Dockerfile — the npm CLI's bundled tree now ships tar 7.5.22, minimatch
+# 10.2.5, brace-expansion 5.0.9, ip-address 10.5.0, none flagged by grype:
+#   - GHSA-7r86-cg39-jmmj / GHSA-23c5-xmqv-rm74 (minimatch ReDoS)
+#   - GHSA-rgw5-rvv9-x895 / GHSA-mh99-v99m-4gvg (brace-expansion)
+#   - GHSA-mwp4-54f8-5fhr (ip-address)
+#   - CVE-2026-27171 (zlib 1.3.1-r2 — no longer present on node:26.8.1-alpine
+#     after apk upgrade)
+# Verified by scanning the production image WITHOUT this config: the only
+# remaining findings are the busybox trio covered below.
 
 ignore:
-  # minimatch 10.2.x ReDoS vulnerabilities (GHSA-7r86-cg39-jmmj, GHSA-23c5-xmqv-rm74)
-  # The backend has NO minimatch 10.x in production dependencies (npm ls minimatch --omit=dev is empty).
-  # If grype detects minimatch 10.2.2, it is from the globally installed npm CLI (npm install -g npm@latest),
-  # not from application code. npm's minimatch is only used during package installation, not at runtime.
-  # The application does not process untrusted glob patterns through minimatch.
-  - vulnerability: GHSA-7r86-cg39-jmmj
-    package:
-      name: minimatch
-      type: npm
-    reason: |
-      Not in production dependencies. Any finding is from npm CLI internals (global install),
-      not application code. No untrusted glob patterns are processed at runtime.
-  - vulnerability: GHSA-23c5-xmqv-rm74
-    package:
-      name: minimatch
-      type: npm
-    reason: |
-      Not in production dependencies. Any finding is from npm CLI internals (global install),
-      not application code. No untrusted glob patterns are processed at runtime.
-
-  # Alpine base image CVEs with no fix available
-  # These are in the node:26-alpine base image packages. No patched versions exist yet.
-  # Risk is mitigated by: non-root user, network isolation, no untrusted input to affected components.
-
   # busybox CVE-2025-60876 (Medium) - affects busybox, busybox-binsh, ssl_client
-  # No fix available in Alpine repositories as of 2026-02-28.
+  # Alpine base image (node:26-alpine) package with no fix available in Alpine
+  # repositories (first noted 2026-02-28; still unfixed as of 2026-09-01).
   - vulnerability: CVE-2025-60876
     reason: |
       Alpine base image (node:26-alpine) package with no fix available.
       Application runs as non-root user with limited busybox usage.
-
-  # zlib CVE-2026-27171 (Medium) - affects zlib 1.3.1-r2
-  # No fix available in Alpine repositories as of 2026-02-28.
-  - vulnerability: CVE-2026-27171
-    reason: |
-      Alpine base image (node:26-alpine) package with no fix available.
-      zlib is used internally by Node.js for HTTP compression.
-      Application is not directly exposed to untrusted compressed data.
-
-  # 2026-08-08: brace-expansion / ip-address flagged by grype come from the Node runtime's
-  # BUNDLED npm (/usr/local/lib/node_modules/npm/...), NOT this app's dependencies. Our app
-  # deps are fixed (brace-expansion 5.0.9, ip-address 10.4.0) and pass NPM Audit + Trivy +
-  # the Dependency Vulnerability Scan. The npm CLI copies run only during image build, never
-  # in the running app's attack surface — same class as the minimatch entries above.
-  - vulnerability: GHSA-rgw5-rvv9-x895
-    package:
-      name: brace-expansion
-      type: npm
-    reason: |
-      Node's bundled-npm internal (not an app dep). App brace-expansion is 5.0.9 (fixed) and
-      passes the npm-level scans. Not runtime-reachable.
-  - vulnerability: GHSA-mh99-v99m-4gvg
-    package:
-      name: brace-expansion
-      type: npm
-    reason: |
-      Node's bundled-npm internal; app dep fixed at 5.0.9. Not runtime-reachable.
-  - vulnerability: GHSA-mwp4-54f8-5fhr
-    package:
-      name: ip-address
-      type: npm
-    reason: |
-      Node's bundled-npm internal (via npm's socks-proxy-agent chain); app dep fixed at 10.4.0.
-      Not runtime-reachable.

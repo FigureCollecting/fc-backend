@@ -7,18 +7,19 @@
 FROM node:26.8.1-alpine AS base
 
 # Cache-bust ARG to invalidate Docker layers when security patches are needed
-ARG CACHE_BUST=2026-09-01-openssl-3.5.8-cve-fix
+ARG CACHE_BUST=2026-09-01-npm-11.19.1-tar-fix
 
 WORKDIR /app
 
 # Upgrade all Alpine packages for latest security patches (openssl >= 3.5.8-r0, busybox, etc.)
-# Pin npm to the 11.x line Node 26 ships: npm@latest (12.0.2, 2026-07-29) still bundles
-# tar 7.5.19 / brace-expansion 5.0.7 (High: GHSA-r292-9mhp-454m, GHSA-rgw5-rvv9-x895);
-# npm 11.19.1+ (2026-08-26) bundles tar 7.5.22 / brace-expansion 5.0.9 (fixed).
+# Pin npm EXACTLY at 11.19.1: bundles tar 7.5.22 (GHSA-r292-9mhp-454m fixed >=7.5.21)
+# and brace-expansion 5.0.9; node 26.8.1's own bundled npm 11.19.0 and npm@12/latest
+# ship vulnerable tar <=7.5.20. A floating `npm@11` can resolve to a stale/lagging
+# version and silently revert the fix — pin exactly (fc-frontend precedent).
 RUN apk update && \
     apk upgrade --no-cache && \
     apk add --no-cache dumb-init && \
-    npm install -g npm@11 && \
+    npm install -g npm@11.19.1 && \
     npm cache clean --force
 
 # Copy package files (.npmrc maps @figurecollecting to GitHub Packages; it carries
@@ -83,7 +84,7 @@ RUN npm run build
 FROM node:26.8.1-alpine AS production
 
 # Cache-bust ARG for production stage security patches
-ARG CACHE_BUST=2026-09-01-openssl-3.5.8-cve-fix
+ARG CACHE_BUST=2026-09-01-npm-11.19.1-tar-fix
 
 # Build arguments for customization
 ARG GITHUB_ORG=FigureCollecting
@@ -96,10 +97,10 @@ LABEL org.opencontainers.image.vendor="Figure Collector Services"
 LABEL org.opencontainers.image.source="https://github.com/${GITHUB_ORG}/${GITHUB_REPO}"
 
 # Upgrade all Alpine packages for latest security patches (openssl >= 3.5.8-r0, busybox, etc.)
-# Pin npm to the 11.x line (see base stage): clears bundled tar/brace-expansion advisories
+# Pin npm EXACTLY at 11.19.1 (see base stage): bundled tar 7.5.22 clears GHSA-r292-9mhp-454m
 RUN apk update && \
     apk upgrade --no-cache && \
-    npm install -g npm@11 && \
+    npm install -g npm@11.19.1 && \
     npm cache clean --force
 
 # Install dumb-init and create non-root user in a single layer
