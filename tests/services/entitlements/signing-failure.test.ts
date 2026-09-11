@@ -34,7 +34,7 @@ import {
   mintEntitlementAssertion,
   entitlementMintCounters,
   resetEntitlementSigningForTest,
-} from '../../src/services/entitlementAssertion';
+} from '../../../src/services/entitlements/assertion';
 
 const KID = 'ent-test-2026-09';
 const SUB = '7f3a1c62-9d44-4e51-8b0a-2c6d5e1f9a33';

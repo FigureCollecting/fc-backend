@@ -30,8 +30,8 @@ import {
   ConnectError,
   type CompareSeed,
 } from '../services/spineReadClient';
-import { entitlementsForUser } from '../services/entitlementGrants';
-import { mintEntitlementAssertion } from '../services/entitlementAssertion';
+import { entitlementHeaderFor } from '../services/entitlements';
+import { resolveEntitlementSubject } from '../services/entitlementSubject.legacy';
 
 const router = express.Router();
 
@@ -88,6 +88,13 @@ const grpcStatusName = (code: Code): string => Code[code].replace(/([a-z0-9])([A
 /**
  * The assertion for this request, or null when there is nothing to assert.
  *
+ * THESE SIX LINES ARE THE ENTIRE WIRING, and the only place the legacy app and
+ * the portable module meet: turn our own user id into an Authentik uuid (glue,
+ * src/services/entitlementSubject.legacy.ts — deleted on port), then hand that
+ * uuid to the module (src/services/entitlements — copied verbatim on port).
+ * Porting this function means replacing ONE line: wherever the Postgres-only
+ * backend gets its Authentik subject from.
+ *
  * NEVER REJECTS. Grant resolution is a security decision on a read path, and
  * the correct outcome of a broken decision is "show less", not "show an error"
  * — so an unexpected throw anywhere beneath this (the services themselves are
@@ -97,9 +104,9 @@ const grpcStatusName = (code: Code): string => Code[code].replace(/([a-z0-9])([A
 export async function assertionFor(userId: string | undefined): Promise<string | null> {
   if (!userId) return null;
   try {
-    const { sub, ent } = await entitlementsForUser(userId);
-    if (sub === null) return null;
-    return mintEntitlementAssertion({ sub, ent });
+    const subject = await resolveEntitlementSubject(userId);
+    if (subject === null) return null;
+    return await entitlementHeaderFor(subject);
   } catch (err) {
     console.error('[COMPARE] entitlement resolution failed — reading without an assertion:', (err as Error).message);
     return null;

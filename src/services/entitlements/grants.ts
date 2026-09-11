@@ -37,11 +37,17 @@
  * numbers; not caching it at all would point a retry storm at the service that
  * is already unwell. A few seconds is the compromise: the storm is damped, and
  * recovery is quick.
+ *
+ * IT TAKES A SUBJECT STRING AND NOTHING ELSE. No user model, no database, no
+ * notion of how this process authenticates anyone — see the directory note in
+ * ./index.ts. Mapping a logged-in user to an Authentik uuid is the host
+ * application's job and lives outside this directory, because that mapping is
+ * exactly what differs between the backend this runs in today and the
+ * Postgres-only one it is destined for.
  */
 import axios from 'axios';
-import mongoose from 'mongoose';
 import { INVENTORY_LEVELS, type EntitlementName } from '@figurecollecting/ingest-contract/entitlement';
-import User from '../models/User';
+import { mintEntitlementAssertion } from './assertion';
 
 /** Nothing granted. A frozen shared value so a caller cannot mutate the denial. */
 const NO_GRANTS: readonly EntitlementName[] = Object.freeze([]);
@@ -203,58 +209,19 @@ export async function grantsForSubject(
 }
 
 /**
- * The OpenFGA subject for one fc-backend user, or `null` if there is none.
+ * The `fc-entitlements` header value for this subject, or `null` when there is
+ * nothing to send.
  *
- * WHY THIS IS NOT THE MONGO _id. OpenFGA's subjects are Authentik user uuids —
- * that is what fc-infra's grant script writes and what the assertion's `sub`
- * must carry. fc-backend's own user identity is a Mongo ObjectId, so a user is
- * entitleable only once the two are linked, which is what `authentikId` on the
- * User model records. Until Authentik is the login for this service that field
- * is set for the handful of accounts that need it (the owner's first grant);
- * afterwards it is populated at sign-in.
- *
- * NO LINK MEANS NO SUBJECT MEANS DENY — and deliberately WITHOUT asking
- * OpenFGA: sending the Mongo id as a subject would look like a working check
- * and quietly answer for a user that does not exist in the graph.
+ * THE WHOLE MODULE IN ONE CALL, and the only entry point a host application
+ * needs: check, then sign the outcome. Both halves already resolve every
+ * failure to "nothing", so this does too — and a caller that gets `null`
+ * attaches no header, which is what a denial looks like on the wire.
  */
-export async function resolveEntitlementSubject(userId: string): Promise<string | null> {
-  if (!mongoose.Types.ObjectId.isValid(userId)) return null;
-  try {
-    const user = await User.findById(userId).select('authentikId').lean<{ authentikId?: string } | null>();
-    const authentikId = user?.authentikId?.trim();
-    if (!authentikId || !UUID_RE.test(authentikId)) return null;
-    return authentikId;
-  } catch (err) {
-    console.error('[ENTITLEMENT] could not resolve the entitlement subject — denying:', (err as Error).message);
-    return null;
-  }
-}
-
-export interface UserEntitlements {
-  /** The OpenFGA/assertion subject, or `null` when this user has no Authentik identity. */
-  sub: string | null;
-  /** What the Check said they hold. Always empty when `sub` is null. */
-  ent: readonly EntitlementName[];
-}
-
-/**
- * What this fc-backend user may see, and the subject the answer was reached
- * for. The route's entry point.
- *
- * It returns BOTH because the assertion has to name the same subject the Check
- * was run for. Handing back only the grants would force the caller to resolve
- * the identity a second time, and two independent resolutions of "who is this"
- * are two chances to sign a grant that was checked for somebody else.
- */
-export async function entitlementsForUser(
-  userId: string,
+export async function entitlementHeaderFor(
+  subject: string,
   nowMs: number = Date.now(),
   env: NodeJS.ProcessEnv = process.env
-): Promise<UserEntitlements> {
-  const sub = await resolveEntitlementSubject(userId);
-  if (sub === null) {
-    bump('no_subject');
-    return { sub: null, ent: NO_GRANTS };
-  }
-  return { sub, ent: await grantsForSubject(sub, nowMs, env) };
+): Promise<string | null> {
+  const ent = await grantsForSubject(subject, nowMs, env);
+  return mintEntitlementAssertion({ sub: subject, ent }, nowMs, env);
 }

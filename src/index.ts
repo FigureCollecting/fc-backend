@@ -16,7 +16,7 @@ import lookupRoutes from './routes/lookupRoutes';
 import listRoutes from './routes/listRoutes';
 import compareRoutes from './routes/compareRoutes';
 import { connectDB } from './config/db';
-import { initEntitlementSigning } from './services/entitlementAssertion';
+import { initEntitlementSigning } from './services/entitlements';
 import { globalErrorHandler } from './middleware/validationMiddleware';
 import * as packageJson from '../package.json';
 import { createLogger } from './utils/logger';

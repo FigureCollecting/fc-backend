@@ -22,10 +22,12 @@ import { createTestApp } from '../helpers/testApp';
 import User from '../../src/models/User';
 import { generateTestToken } from '../setup';
 import { generateTestSigningKey, verifyEntitlementHeader } from '../helpers/entitlementVerifier';
-import * as grantsModule from '../../src/services/entitlementGrants';
+import * as legacySubject from '../../src/services/entitlementSubject.legacy';
 import { assertionFor } from '../../src/routes/compareRoutes';
-import { resetEntitlementGrantsForTest } from '../../src/services/entitlementGrants';
-import { resetEntitlementSigningForTest } from '../../src/services/entitlementAssertion';
+import {
+  resetEntitlementGrantsForTest,
+  resetEntitlementSigningForTest,
+} from '../../src/services/entitlements';
 
 const app = createTestApp();
 
@@ -546,7 +548,7 @@ describe('Compare Routes — entitlement assertion (D6 U6)', () => {
   it('serves a redacted read rather than a 500 when grant resolution throws unexpectedly', async () => {
     await wire(fgaAllows(true));
     const boom = jest
-      .spyOn(grantsModule, 'entitlementsForUser')
+      .spyOn(legacySubject, 'resolveEntitlementSubject')
       .mockRejectedValue(new Error('authz substrate exploded'));
     try {
       const res = await get(entitledToken);

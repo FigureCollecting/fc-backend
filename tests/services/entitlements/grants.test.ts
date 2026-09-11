@@ -12,19 +12,24 @@
  * Driven against a REAL in-process OpenFGA stub rather than a mocked axios, so
  * the request SHAPE (path, body, bearer) is pinned too — that shape is the part
  * that silently returns `allowed:false` forever if it is wrong.
+ *
+ * NO DATABASE, NO USER MODEL, NO FIXTURES BUT FAKES AND GENERATED KEYPAIRS.
+ * This file ports to the Postgres-only backend unchanged, which is the point:
+ * the module under test takes a subject STRING, so its suite never needs to
+ * know how a subject is produced. Mapping a logged-in user to one is legacy
+ * glue and is tested in tests/services/entitlementSubject.legacy.test.ts.
  */
 import * as http from 'node:http';
 import type { AddressInfo, Socket } from 'node:net';
-import mongoose from 'mongoose';
 import { INVENTORY_LEVELS } from '@figurecollecting/ingest-contract/entitlement';
-import User from '../../src/models/User';
 import {
   grantsForSubject,
-  entitlementsForUser,
-  resolveEntitlementSubject,
+  entitlementHeaderFor,
   entitlementGrantCounters,
   resetEntitlementGrantsForTest,
-} from '../../src/services/entitlementGrants';
+} from '../../../src/services/entitlements/grants';
+import { resetEntitlementSigningForTest } from '../../../src/services/entitlements/assertion';
+import { generateTestSigningKey, verifyEntitlementHeader } from '../../helpers/entitlementVerifier';
 
 const SUB = '7f3a1c62-9d44-4e51-8b0a-2c6d5e1f9a33';
 const OTHER_SUB = '11111111-2222-3333-4444-555555555555';
@@ -100,6 +105,8 @@ const ENV_KEYS = [
   'OPENFGA_TIMEOUT_MS',
   'ENTITLEMENT_GRANT_CACHE_TTL_MS',
   'ENTITLEMENT_GRANT_ERROR_TTL_MS',
+  'ENTITLEMENT_SIGNING_KEY_PEM',
+  'ENTITLEMENT_SIGNING_KID',
 ] as const;
 
 let saved: Record<string, string | undefined> = {};
@@ -117,6 +124,7 @@ beforeEach(() => {
   saved = Object.fromEntries(ENV_KEYS.map(k => [k, process.env[k]]));
   for (const k of ENV_KEYS) delete process.env[k];
   resetEntitlementGrantsForTest();
+  resetEntitlementSigningForTest();
   warnSpy = jest.spyOn(console, 'warn').mockImplementation(() => {});
   errorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
   logSpy = jest.spyOn(console, 'log').mockImplementation(() => {});
@@ -135,6 +143,7 @@ afterEach(async () => {
   errorSpy.mockRestore();
   logSpy.mockRestore();
   resetEntitlementGrantsForTest();
+  resetEntitlementSigningForTest();
 });
 
 const configure = (baseUrl: string, extra: Record<string, string> = {}): void => {
@@ -400,104 +409,64 @@ describe('secret hygiene', () => {
   });
 });
 
-describe('resolveEntitlementSubject', () => {
-  const userId = new mongoose.Types.ObjectId('0000000000000000000004a2');
 
-  const makeUser = async (authentikId?: string): Promise<void> => {
-    await User.create({
-      _id: userId,
-      username: 'entitleduser',
-      email: 'entitled@test.com',
-      password: 'password123',
-      ...(authentikId === undefined ? {} : { authentikId }),
-    });
+describe('entitlementHeaderFor — the module in one call', () => {
+  const KID = 'ent-test-2026-09';
+
+  const withKey = (): ReturnType<typeof generateTestSigningKey> => {
+    const kp = generateTestSigningKey(KID);
+    process.env.ENTITLEMENT_SIGNING_KEY_PEM = kp.privatePem;
+    process.env.ENTITLEMENT_SIGNING_KID = KID;
+    return kp;
   };
 
-  it('returns the Authentik uuid recorded on the user', async () => {
-    await makeUser(SUB);
-    await expect(resolveEntitlementSubject(userId.toString())).resolves.toBe(SUB);
-  });
-
-  it('returns null when the user has no Authentik identity yet', async () => {
-    await makeUser();
-    await expect(resolveEntitlementSubject(userId.toString())).resolves.toBeNull();
-  });
-
-  it('refuses a subject that is not a uuid — OpenFGA stores it verbatim and a typo grants nobody', async () => {
-    await makeUser('ross@example.com');
-    await expect(resolveEntitlementSubject(userId.toString())).resolves.toBeNull();
-  });
-
-  it('returns null for an unknown user id', async () => {
-    await expect(resolveEntitlementSubject(new mongoose.Types.ObjectId().toString())).resolves.toBeNull();
-  });
-
-  it('returns null for a malformed user id rather than throwing', async () => {
-    await expect(resolveEntitlementSubject('not-an-object-id')).resolves.toBeNull();
-  });
-
-  it('returns null when the lookup itself fails — a sick database denies, it does not 500', async () => {
-    const boom = jest.spyOn(User, 'findById').mockImplementation(() => {
-      throw new Error('connection pool destroyed');
-    });
-    try {
-      await expect(resolveEntitlementSubject(userId.toString())).resolves.toBeNull();
-      expect(errorSpy).toHaveBeenCalled();
-    } finally {
-      boom.mockRestore();
-    }
-  });
-});
-
-describe('entitlementsForUser', () => {
-  const userId = new mongoose.Types.ObjectId('0000000000000000000004a3');
-
-  it('returns the subject the Check was run for alongside the grant', async () => {
+  it('checks, then signs: the header verifies and names the subject it was checked for', async () => {
+    const kp = withKey();
     stub = await startFga(allowed(true));
     configure(stub.baseUrl);
-    await User.create({
-      _id: userId,
-      username: 'linkeduser',
-      email: 'linked@test.com',
-      password: 'password123',
-      authentikId: SUB,
-    });
 
-    // The subject comes back with the grant so the assertion names the same
-    // identity the Check answered for — not one resolved a second time.
-    await expect(entitlementsForUser(userId.toString())).resolves.toEqual({
-      sub: SUB,
-      ent: [INVENTORY_LEVELS],
-    });
+    const header = await entitlementHeaderFor(SUB);
+
+    const verified = verifyEntitlementHeader(header, kp.keys);
+    expect(verified.outcome).toBe('granted');
+    expect(verified.sub).toBe(SUB);
+    expect([...verified.grants]).toEqual([INVENTORY_LEVELS]);
+    // The subject signed is the subject checked — not one resolved twice.
     expect(stub.captured[0].body.tuple_key.user).toBe(`user:${SUB}`);
   });
 
-  it('returns a denied grant when OpenFGA says no, still naming the subject', async () => {
+  it('returns null when the Check denies', async () => {
+    withKey();
     stub = await startFga(allowed(false));
     configure(stub.baseUrl);
-    await User.create({
-      _id: userId,
-      username: 'deniedusr',
-      email: 'denied@test.com',
-      password: 'password123',
-      authentikId: SUB,
-    });
 
-    await expect(entitlementsForUser(userId.toString())).resolves.toEqual({ sub: SUB, ent: [] });
+    await expect(entitlementHeaderFor(SUB)).resolves.toBeNull();
   });
 
-  it('denies BEFORE the network when the user has no Authentik identity', async () => {
+  it('returns null when the Check errors', async () => {
+    withKey();
+    stub = await startFga((_c, res) => {
+      res.writeHead(500);
+      res.end('{}');
+    });
+    configure(stub.baseUrl);
+
+    await expect(entitlementHeaderFor(SUB)).resolves.toBeNull();
+  });
+
+  it('returns null when there is no signing key, even on an allow', async () => {
     stub = await startFga(allowed(true));
     configure(stub.baseUrl);
-    await User.create({
-      _id: userId,
-      username: 'unlinkeduser',
-      email: 'unlinked@test.com',
-      password: 'password123',
-    });
 
-    await expect(entitlementsForUser(userId.toString())).resolves.toEqual({ sub: null, ent: [] });
+    await expect(entitlementHeaderFor(SUB)).resolves.toBeNull();
+  });
+
+  it.each([['empty', ''], ['blank', '   ']])('returns null for a %s subject, without calling OpenFGA', async (_l, sub) => {
+    withKey();
+    stub = await startFga(allowed(true));
+    configure(stub.baseUrl);
+
+    await expect(entitlementHeaderFor(sub)).resolves.toBeNull();
     expect(stub.captured).toHaveLength(0);
-    expect(entitlementGrantCounters().no_subject).toBe(1);
   });
 });
