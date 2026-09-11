@@ -18,6 +18,8 @@ import {
   type CompareRequest as WireCompareRequest,
   type CompareResponse as WireCompareResponse,
 } from '@figurecollecting/ingest-contract/read';
+import * as fs from 'node:fs';
+import { ENTITLEMENTS_HEADER } from '@figurecollecting/ingest-contract/entitlement';
 import {
   SpineReadClient,
   createSpineReadClientFromEnv,
@@ -29,6 +31,8 @@ type StubImpl = (req: WireCompareRequest) => Promise<WireCompareResponse> | Wire
 interface StubServer {
   baseUrl: string;
   captured: WireCompareRequest[];
+  /** Request metadata the stub saw, one entry per call — how the entitlement header is observed. */
+  capturedHeaders: Headers[];
   callCount: () => number;
   close: () => Promise<void>;
 }
@@ -53,13 +57,15 @@ const okResponse = (resultJson: string = JSON.stringify(FIXTURE_RESULT)): WireCo
 /** In-process SpineRead stub: plain node:http (h1), ephemeral port. */
 async function startStub(impl: StubImpl): Promise<StubServer> {
   const captured: WireCompareRequest[] = [];
+  const capturedHeaders: Headers[] = [];
   let calls = 0;
 
   const routes = (router: ConnectRouter) => {
     router.service(SpineRead, {
-      compare: async (req: WireCompareRequest) => {
+      compare: async (req: WireCompareRequest, ctx: { requestHeader: Headers }) => {
         calls++;
         captured.push(req);
+        capturedHeaders.push(ctx.requestHeader);
         return impl(req);
       },
     });
@@ -77,6 +83,7 @@ async function startStub(impl: StubImpl): Promise<StubServer> {
   return {
     baseUrl: `http://127.0.0.1:${port}`,
     captured,
+    capturedHeaders,
     callCount: () => calls,
     close: async () => {
       for (const socket of sockets) socket.destroy();
@@ -189,5 +196,79 @@ describe('SpineReadClient', () => {
       );
       expect(DEFAULT_COMPARE_TIMEOUT_MS).toBe(10_000);
     });
+  });
+});
+
+describe('SpineReadClient — the fc-entitlements assertion', () => {
+  let stub: StubServer | null = null;
+  const ASSERTION = 'eyJhbGciOiJFZERTQSJ9.eyJzdWIiOiJyb3NzIn0.c2lnbmF0dXJl';
+
+  afterEach(async () => {
+    if (stub) {
+      await stub.close();
+      stub = null;
+    }
+  });
+
+  it('attaches the assertion verbatim as fc-entitlements request metadata', async () => {
+    stub = await startStub(() => okResponse());
+    const client = new SpineReadClient(stub.baseUrl, 5000);
+
+    await client.compare({ gtin14: '04570232591998' }, '2026-08-19T00:00:00Z', ASSERTION);
+
+    expect(stub.capturedHeaders[0].get(ENTITLEMENTS_HEADER)).toBe(ASSERTION);
+  });
+
+  it.each([
+    ['no argument at all', undefined],
+    ['null — the shape a denial arrives in', null],
+    ['an empty string', ''],
+  ])('sends NO header for %s', async (_label, assertion) => {
+    stub = await startStub(() => okResponse());
+    const client = new SpineReadClient(stub.baseUrl, 5000);
+
+    await client.compare({ gtin14: '04570232591998' }, '2026-08-19T00:00:00Z', assertion as string | null | undefined);
+
+    // Absent, not empty: the spine reads an empty header value as `absent`
+    // anyway, but an empty header is still a header, and a caller that always
+    // sends one cannot be told apart from one that lost its key.
+    expect(stub.capturedHeaders[0].has(ENTITLEMENTS_HEADER)).toBe(false);
+  });
+
+  it('keeps the per-call deadline while carrying an assertion', async () => {
+    stub = await startStub(() => okResponse());
+    const client = new SpineReadClient(stub.baseUrl, 5000);
+
+    await client.compare({ gtin14: '04570232591998' }, '2026-08-19T00:00:00Z', ASSERTION);
+
+    // The Connect protocol's deadline header. Its presence proves timeoutMs
+    // survived being merged with the headers rather than replaced by them.
+    expect(stub.capturedHeaders[0].get('connect-timeout-ms')).toBe('5000');
+  });
+
+  it('does not log the assertion', async () => {
+    const logs: string[] = [];
+    const spies = (['log', 'warn', 'error', 'info', 'debug'] as const).map(level =>
+      jest.spyOn(console, level).mockImplementation((...args: unknown[]) => {
+        logs.push(args.map(String).join(' '));
+      })
+    );
+    try {
+      stub = await startStub(() => okResponse());
+      const client = new SpineReadClient(stub.baseUrl, 5000);
+      await client.compare({ gtin14: '04570232591998' }, '2026-08-19T00:00:00Z', ASSERTION);
+      expect(logs.join('\n')).not.toContain(ASSERTION);
+    } finally {
+      for (const spy of spies) spy.mockRestore();
+    }
+  });
+
+  it('REGRESSION GUARD: tracing does not capture request/response headers onto spans', () => {
+    // The assertion is a bearer grant. OpenTelemetry's HTTP instrumentation
+    // only puts headers on spans when headersToSpanAttributes is configured,
+    // and it is not — but that is a one-line change away from exporting every
+    // assertion to a collector, so it is pinned here rather than remembered.
+    const tracing = fs.readFileSync(`${__dirname}/../../src/tracing.ts`, 'utf8');
+    expect(tracing).not.toContain('headersToSpanAttributes');
   });
 });

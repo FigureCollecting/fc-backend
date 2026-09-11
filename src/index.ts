@@ -16,6 +16,7 @@ import lookupRoutes from './routes/lookupRoutes';
 import listRoutes from './routes/listRoutes';
 import compareRoutes from './routes/compareRoutes';
 import { connectDB } from './config/db';
+import { initEntitlementSigning } from './services/entitlementAssertion';
 import { globalErrorHandler } from './middleware/validationMiddleware';
 import * as packageJson from '../package.json';
 import { createLogger } from './utils/logger';
@@ -168,6 +169,13 @@ const startServer = async () => {
     // Connect to MongoDB before accepting requests
     await connectDB();
     logger.info('MongoDB connected successfully');
+
+    // Load the entitlement signing key ONCE, and say whether minting is on.
+    // Deliberately NOT fatal: without a key every spine read comes back with
+    // stock magnitudes withheld, which is the safe state, not a broken one.
+    // The warning exists so that state is a decision an operator can see rather
+    // than a silence they discover from a user's missing numbers.
+    initEntitlementSigning();
 
     // Now start the HTTP server
     server = app.listen(PORT, () => {

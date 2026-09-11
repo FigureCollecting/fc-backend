@@ -6,6 +6,20 @@
  * JWT-protected with the same `protect` middleware as the other protected
  * routes (e.g. lookupRoutes). now_iso is minted at THIS edge, per request —
  * the RPC never reads wall time server-side.
+ *
+ * THE ENTITLEMENT GATE (D6 U6). The spine withholds per-store stock MAGNITUDES
+ * from any caller that cannot prove an entitlement. fc-backend is the only
+ * user-facing caller (lookup-caller-architecture, RATIFIED), so it is the only
+ * party that knows WHO is asking: per request it resolves the user's Authentik
+ * subject, runs an OpenFGA Check, and — only on an explicit allow — mints a
+ * 60-second Ed25519 assertion for the spine to verify.
+ *
+ * NOTHING ABOUT THAT CHANGES THE RESPONSE CONTRACT. Denied, unlinked, OpenFGA
+ * down, no signing key: every one of them sends no header and the read comes
+ * back a normal 200 with the magnitudes absent and `coverage.redacted` naming
+ * what was withheld. Availability, prices and every other fact are unaffected.
+ * A gate that returned 403 here would tell an unentitled caller that a number
+ * EXISTS, which is most of what the number was worth.
  */
 import express, { Request, Response } from 'express';
 import rateLimit from 'express-rate-limit';
@@ -16,6 +30,8 @@ import {
   ConnectError,
   type CompareSeed,
 } from '../services/spineReadClient';
+import { entitlementsForUser } from '../services/entitlementGrants';
+import { mintEntitlementAssertion } from '../services/entitlementAssertion';
 
 const router = express.Router();
 
@@ -50,7 +66,7 @@ router.get('/by-gtin/:gtin14', async (req: Request, res: Response) => {
       message: 'gtin14 must be exactly 14 digits',
     });
   }
-  return handleCompare(res, { gtin14 });
+  return handleCompare(req, res, { gtin14 });
 });
 
 router.get('/by-head/:headId', async (req: Request, res: Response) => {
@@ -62,14 +78,35 @@ router.get('/by-head/:headId', async (req: Request, res: Response) => {
       message: 'headId must be a UUID',
     });
   }
-  return handleCompare(res, { headId });
+  return handleCompare(req, res, { headId });
 });
 
 /** Canonical gRPC status name (e.g. Code.InvalidArgument -> 'INVALID_ARGUMENT'),
  * consistent with this module's other SCREAMING_SNAKE codes. */
 const grpcStatusName = (code: Code): string => Code[code].replace(/([a-z0-9])([A-Z])/g, '$1_$2').toUpperCase();
 
-async function handleCompare(res: Response, seed: CompareSeed): Promise<Response> {
+/**
+ * The assertion for this request, or null when there is nothing to assert.
+ *
+ * NEVER REJECTS. Grant resolution is a security decision on a read path, and
+ * the correct outcome of a broken decision is "show less", not "show an error"
+ * — so an unexpected throw anywhere beneath this (the services themselves are
+ * written not to throw, and tested for it) is caught here and becomes a
+ * redacted read rather than a 500.
+ */
+export async function assertionFor(userId: string | undefined): Promise<string | null> {
+  if (!userId) return null;
+  try {
+    const { sub, ent } = await entitlementsForUser(userId);
+    if (sub === null) return null;
+    return mintEntitlementAssertion({ sub, ent });
+  } catch (err) {
+    console.error('[COMPARE] entitlement resolution failed — reading without an assertion:', (err as Error).message);
+    return null;
+  }
+}
+
+async function handleCompare(req: Request, res: Response, seed: CompareSeed): Promise<Response> {
   // Read env at call time (not module load) so degraded mode reacts to env
   // changes without a restart — mirrors mediaManagerClient.ts's pattern.
   const client = createSpineReadClientFromEnv();
@@ -83,9 +120,13 @@ async function handleCompare(res: Response, seed: CompareSeed): Promise<Response
   // Minted HERE, per request — the RPC never reads wall time server-side.
   const nowIso = new Date().toISOString();
 
+  // Resolved AFTER the degraded-mode check: there is no point asking OpenFGA
+  // who someone is when the read cannot happen at all.
+  const assertion = await assertionFor(req.user?.id);
+
   let response;
   try {
-    response = await client.compare(seed, nowIso);
+    response = await client.compare(seed, nowIso, assertion);
   } catch (err) {
     const connectError = ConnectError.from(err);
     // Log server-side ONLY: connectError.rawMessage may be a genuine
@@ -118,6 +159,11 @@ async function handleCompare(res: Response, seed: CompareSeed): Promise<Response
   // FIDELITY DOCTRINE) — JSON.parse preserves every string amount
   // verbatim (a quoted "295" stays the JS string "295", never coerced to
   // a float). Spread verbatim into the response, plus the asOf echo.
+  //
+  // VERBATIM INCLUDES `coverage.redacted`: it is the ONLY thing that lets the
+  // UI tell "this store publishes no stock count" from "you may not see this
+  // store's stock count". Filter it out and every unentitled surface renders a
+  // confident zero, which is a false negative rather than a blank.
   //
   // Parsed in its OWN try/catch, separate from the RPC call above: a
   // parse failure here is a LOCAL deserialization bug (malformed
