@@ -27,9 +27,23 @@ const ALLOWED_BARE = [
   /^@figurecollecting\/ingest-contract(\/|$)/,
 ];
 
-/** Every `from '...'` and `require('...')` specifier in a source file. */
-const specifiersIn = (source: string): string[] => [
+/**
+ * Every module specifier in a source file, in EVERY form the language offers.
+ *
+ * The forms matter more than they look. A guard that only understands
+ * `from '...'` is satisfied by `import '../../config/database'` and by
+ * `() => import('../../utils/logger')` — both real coupling, both invisible,
+ * and neither caught by the forbidden-symbol pass if the module has a neutral
+ * name. A partial guard is worse than none, because it is believed.
+ */
+export const specifiersIn = (source: string): string[] => [
+  // import x from 'm' / import {a} from 'm' / import * as m from 'm' / export {a} from 'm'
   ...[...source.matchAll(/\bfrom\s+['"]([^'"]+)['"]/g)].map(m => m[1]),
+  // import 'm'  — side-effect only, no bindings, no `from`
+  ...[...source.matchAll(/\bimport\s+['"]([^'"]+)['"]/g)].map(m => m[1]),
+  // import('m') — dynamic, deferred, and just as much a dependency
+  ...[...source.matchAll(/\bimport\(\s*['"]([^'"]+)['"]\s*\)/g)].map(m => m[1]),
+  // require('m')
   ...[...source.matchAll(/\brequire\(\s*['"]([^'"]+)['"]\s*\)/g)].map(m => m[1]),
 ];
 
@@ -37,6 +51,23 @@ const moduleFiles = fs
   .readdirSync(MODULE_DIR)
   .filter(name => name.endsWith('.ts'))
   .map(name => path.join(MODULE_DIR, name));
+
+describe('the specifier extractor sees every import form', () => {
+  // Tested on SOURCE STRINGS rather than on the real files, because the whole
+  // point is the forms the real files do not currently contain.
+  it.each([
+    ['static default', "import mongoose from 'mongoose';", 'mongoose'],
+    ['static named', "import { Types } from 'mongoose';", 'mongoose'],
+    ['namespace', "import * as m from 'mongoose';", 'mongoose'],
+    ['re-export', "export { grantsForSubject } from './grants';", './grants'],
+    ['bare side-effect', "import '../../config/database';", '../../config/database'],
+    ['dynamic', "const later = () => import('../../utils/logger');", '../../utils/logger'],
+    ['dynamic, awaited', "const l = await import('../../utils/logger');", '../../utils/logger'],
+    ['require', "const m = require('mongoose');", 'mongoose'],
+  ])('catches a %s import', (_label, source, expected) => {
+    expect(specifiersIn(source)).toContain(expected);
+  });
+});
 
 describe('src/services/entitlements is self-contained', () => {
   it('contains the module (guards against a rename silently emptying this suite)', () => {

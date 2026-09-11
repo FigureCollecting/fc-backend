@@ -321,6 +321,11 @@ See `.env.example` for complete configuration template. Run `./setup-local-env.s
 - `OPENFGA_TIMEOUT_MS`: per-Check timeout (default 2000)
 - `ENTITLEMENT_GRANT_CACHE_TTL_MS`: how long a Check result is reused (default 30000)
 - `ENTITLEMENT_GRANT_ERROR_TTL_MS`: how long a FAILED Check is remembered (default 5000)
+- `ENTITLEMENT_GRANT_CACHE_MAX`: ceiling on cached subjects before the oldest are evicted (default 10000)
+
+Every numeric variable above must be greater than zero. Zero is not a smaller bound, it is the absence
+of one -- a timeout of 0 means "wait forever" -- so a non-positive or nonsensical value falls back to the
+documented default rather than being honoured.
 
 Every one of these is optional in the sense that nothing breaks without them. Unset, the service simply
 never sends an assertion, and the spine returns reads with stock magnitudes withheld.
@@ -386,6 +391,14 @@ That also means a misconfiguration degrades to *showing less*, never to an outag
 
 **Clients must read `coverage.redacted`.** A UI that treats a missing magnitude as zero renders a confident
 false negative on every unentitled surface. The marker is passed through from the spine verbatim.
+
+**The subject is an Authentik user uuid, and the module enforces it.** Not a numeric pk, not an email,
+not a username, and not this application's own user id. OpenFGA stores a subject verbatim and never
+resolves it, so a differently-shaped identifier is not an error at any layer: the Check returns false for
+a user that will never exist, no header is sent, and the numbers quietly go missing with every symptom
+pointing at the gate rather than at the identifier. The write side already refuses a non-uuid, so the read
+side does too -- `isEntitlementSubject` is exported for a caller that wants to check its own identity
+source against the same rule.
 
 **Granting the entitlement.** Two tuples, written by `fc-infra/tools/entitlements/grant-inventory-levels.sh
 <authentik-user-uuid>`: membership and the direct grant. The model defines the entitlement as an

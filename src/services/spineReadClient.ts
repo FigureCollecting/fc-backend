@@ -53,7 +53,7 @@ export class SpineReadClient {
    * server-side either (read.proto FIDELITY DOCTRINE): every verdict must
    * be reproducible from (gathered signals, cfg, now_iso).
    *
-   * `assertion` is the compact JWS from src/services/entitlementAssertion.ts,
+   * `assertion` is the compact JWS from src/services/entitlements/assertion.ts,
    * or null/undefined when the caller holds nothing. It travels as REQUEST
    * METADATA, never in the message: read-service.ts sets OTel span attributes
    * off request FIELDS, so a body-borne assertion would be exported to a

@@ -107,6 +107,7 @@ const ENV_KEYS = [
   'ENTITLEMENT_GRANT_ERROR_TTL_MS',
   'ENTITLEMENT_SIGNING_KEY_PEM',
   'ENTITLEMENT_SIGNING_KID',
+  'ENTITLEMENT_GRANT_CACHE_MAX',
 ] as const;
 
 let saved: Record<string, string | undefined> = {};
@@ -199,6 +200,26 @@ describe('grantsForSubject — the Check', () => {
     expect(stub.captured[0].body.tuple_key.object).toBe('app:staging');
   });
 
+  it('sends no Authorization header when no preshared key is configured', async () => {
+    // A supported deployment: OpenFGA running without auth. Sending an empty
+    // bearer instead of none would be rejected by a server that DOES require
+    // one, turning a config gap into a puzzling 401 rather than a plain one.
+    stub = await startFga(allowed(true));
+    process.env.OPENFGA_API_URL = stub.baseUrl;
+    process.env.OPENFGA_STORE_ID = STORE_ID;
+
+    await expect(grantsForSubject(SUB)).resolves.toEqual([INVENTORY_LEVELS]);
+    expect(stub.captured[0].authorization).toBeUndefined();
+  });
+
+  it('tolerates a trailing slash on the API url', async () => {
+    stub = await startFga(allowed(true));
+    configure(`${stub.baseUrl}/`);
+
+    await grantsForSubject(SUB);
+    expect(stub.captured[0].path).toBe(`/stores/${STORE_ID}/check`);
+  });
+
   it('returns no grants when OpenFGA denies', async () => {
     stub = await startFga(allowed(false));
     configure(stub.baseUrl);
@@ -273,6 +294,47 @@ describe('grantsForSubject — every failure is a DENY (the B1 fail-open lesson)
 
     await expect(grantsForSubject(sub)).resolves.toEqual([]);
     expect(stub.captured).toHaveLength(0);
+  });
+});
+
+describe('grantsForSubject — the subject must be an Authentik uuid', () => {
+  // OpenFGA stores a subject VERBATIM and never resolves it, and fc-infra's
+  // grant script refuses to WRITE a tuple for anything but a uuid. A module
+  // that checks a differently-shaped subject therefore asks a question no
+  // tuple can ever answer, and the symptom is numbers silently missing.
+  it.each([
+    ['a Mongo ObjectId', '68c1f0a9b2d4e5f6a7b8c9d0'],
+    ['an email', 'ross@example.com'],
+    ['a username', 'ross'],
+    ['a uuid with a stray prefix', 'user:7f3a1c62-9d44-4e51-8b0a-2c6d5e1f9a33'],
+    ['a uuid missing a group', '7f3a1c62-9d44-4e51-8b0a'],
+    ['a numeric pk', '42'],
+  ])('refuses %s without calling OpenFGA', async (_label, subject) => {
+    stub = await startFga(allowed(true));
+    configure(stub.baseUrl);
+
+    await expect(grantsForSubject(subject)).resolves.toEqual([]);
+    expect(stub.captured).toHaveLength(0);
+    expect(entitlementGrantCounters().bad_subject).toBeGreaterThanOrEqual(1);
+  });
+
+  it('refuses a non-string subject rather than throwing', async () => {
+    stub = await startFga(allowed(true));
+    configure(stub.baseUrl);
+
+    await expect(grantsForSubject(undefined as unknown as string)).resolves.toEqual([]);
+    await expect(grantsForSubject(null as unknown as string)).resolves.toEqual([]);
+    await expect(grantsForSubject(12345 as unknown as string)).resolves.toEqual([]);
+    expect(stub.captured).toHaveLength(0);
+  });
+
+  it('accepts an uppercase uuid — OpenFGA is case-sensitive, so it is passed through verbatim', async () => {
+    stub = await startFga(allowed(true));
+    configure(stub.baseUrl);
+    const upper = SUB.toUpperCase();
+
+    await expect(grantsForSubject(upper)).resolves.toEqual([INVENTORY_LEVELS]);
+    expect(stub.captured[0].body.tuple_key.user).toBe(`user:${upper}`);
   });
 });
 
@@ -394,6 +456,87 @@ describe('grantsForSubject — caching keeps the hot read path off OpenFGA', () 
     expect(results.every(r => r.length === 1)).toBe(true);
     expect(stub.captured).toHaveLength(1);
   });
+});
+
+describe('grantsForSubject — the cache is bounded (it used to grow forever)', () => {
+  const uuid = (n: number): string =>
+    `00000000-0000-4000-8000-${String(n).padStart(12, '0')}`;
+
+  it('evicts the least recently written subject once the cap is reached', async () => {
+    stub = await startFga(allowed(true));
+    configure(stub.baseUrl, { ENTITLEMENT_GRANT_CACHE_MAX: '2', ENTITLEMENT_GRANT_CACHE_TTL_MS: '30000' });
+
+    await grantsForSubject(uuid(1), 1_000);   // upstream 1
+    await grantsForSubject(uuid(2), 1_000);   // upstream 2
+    await grantsForSubject(uuid(3), 1_000);   // upstream 3, and uuid(1) is evicted
+    expect(stub.captured).toHaveLength(3);
+
+    // Still inside its 30 s lifetime, so a cache that never evicted would
+    // answer this without a call. It does not: the entry is gone.
+    await grantsForSubject(uuid(1), 2_000);
+    expect(stub.captured).toHaveLength(4);
+
+    // The two most recent are still cached.
+    await grantsForSubject(uuid(3), 2_000);
+    expect(stub.captured).toHaveLength(4);
+  });
+
+  it('drops EXPIRED entries before it touches a live one', async () => {
+    stub = await startFga(allowed(true));
+    configure(stub.baseUrl, { ENTITLEMENT_GRANT_CACHE_MAX: '2', ENTITLEMENT_GRANT_CACHE_TTL_MS: '10000' });
+
+    await grantsForSubject(uuid(1), 1_000);        // expires at 11 000
+    await grantsForSubject(uuid(2), 8_000);        // expires at 18 000
+    expect(stub.captured).toHaveLength(2);
+
+    // At 12 000 uuid(1) is dead weight. Admitting uuid(3) should reclaim it and
+    // leave the live uuid(2) alone — evicting by age alone would take uuid(2)
+    // as well, since it is written after uuid(1).
+    await grantsForSubject(uuid(3), 12_000);
+    expect(stub.captured).toHaveLength(3);
+
+    await grantsForSubject(uuid(2), 13_000);
+    expect(stub.captured).toHaveLength(3);
+    expect(entitlementGrantCounters().evicted).toBeGreaterThanOrEqual(1);
+  });
+
+  it('holds many distinct subjects without exceeding the cap', async () => {
+    stub = await startFga(allowed(true));
+    configure(stub.baseUrl, { ENTITLEMENT_GRANT_CACHE_MAX: '8' });
+
+    for (let i = 0; i < 50; i++) await grantsForSubject(uuid(i), 1_000);
+
+    // 50 distinct subjects, 50 Checks, and the map never held more than 8.
+    // Observable as: the first subject is long gone, the last is still there.
+    expect(stub.captured).toHaveLength(50);
+    await grantsForSubject(uuid(49), 1_000);
+    expect(stub.captured).toHaveLength(50);
+    await grantsForSubject(uuid(0), 1_000);
+    expect(stub.captured).toHaveLength(51);
+  });
+});
+
+describe('grantsForSubject — a bound of zero is not a bound', () => {
+  it.each([
+    ['0', '0'],
+    ['a negative value', '-1'],
+    ['nonsense', 'soon'],
+  ])('falls back to the default timeout when the configured one is %s', async (_label, value) => {
+    // axios reads `timeout: 0` as "wait forever". On a user-facing read path a
+    // single typo would turn the Check into an unbounded hang, so a value that
+    // is not a positive number is refused in favour of the documented default.
+    stub = await startFga(() => {
+      /* never responds */
+    });
+    configure(stub.baseUrl, { OPENFGA_TIMEOUT_MS: value });
+
+    const started = Date.now();
+    await expect(grantsForSubject(SUB)).resolves.toEqual([]);
+    const elapsed = Date.now() - started;
+    // The 2 000 ms default fired. A 0 would still be pending.
+    expect(elapsed).toBeGreaterThanOrEqual(1_500);
+    expect(elapsed).toBeLessThan(6_000);
+  }, 20000);
 });
 
 describe('secret hygiene', () => {

@@ -48,6 +48,7 @@
 import axios from 'axios';
 import { INVENTORY_LEVELS, type EntitlementName } from '@figurecollecting/ingest-contract/entitlement';
 import { mintEntitlementAssertion } from './assertion';
+import { isEntitlementSubject } from './subject';
 
 /** Nothing granted. A frozen shared value so a caller cannot mutate the denial. */
 const NO_GRANTS: readonly EntitlementName[] = Object.freeze([]);
@@ -61,14 +62,14 @@ const DEFAULT_CACHE_TTL_MS = 30_000;
 const DEFAULT_ERROR_TTL_MS = 5_000;
 /** Tight by intent: this is a blocking hop inside a user-facing read. */
 const DEFAULT_TIMEOUT_MS = 2_000;
-
 /**
- * OpenFGA stores a subject string VERBATIM and never resolves it: a wrong-shaped
- * subject is not an error, it is a grant for a user that will never exist. Same
- * guard as fc-infra tools/entitlements/grant-inventory-levels.sh, so the two
- * sides cannot disagree about what a subject looks like.
+ * Hard ceiling on cached subjects. The cache is keyed by subject and nothing
+ * ever removed an entry, so it grew with every distinct identity the process
+ * had ever seen and never shrank. That is bounded by the user count in the
+ * application this runs in today, and unbounded in one that takes the subject
+ * straight from a session claim — which is exactly where this module is going.
  */
-const UUID_RE = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/;
+const DEFAULT_CACHE_MAX_ENTRIES = 10_000;
 
 interface CacheEntry {
   grants: readonly EntitlementName[];
@@ -84,7 +85,7 @@ const bump = (name: string): void => {
   counters.set(name, (counters.get(name) ?? 0) + 1);
 };
 
-/** Snapshot: `allow`, `deny`, `error`, `unconfigured`, `no_subject`, `cache_hit`, `coalesced`. */
+/** Snapshot: `allow`, `deny`, `error`, `unconfigured`, `bad_subject`, `cache_hit`, `coalesced`, `evicted`. */
 export const entitlementGrantCounters = (): Readonly<Record<string, number>> => Object.fromEntries(counters);
 
 /** Test seam: drop the cache, the in-flight map, the counters and the one-shot warning. */
@@ -95,9 +96,19 @@ export const resetEntitlementGrantsForTest = (): void => {
   warnedUnconfigured = false;
 };
 
+/**
+ * A positive finite number from the environment, or the default.
+ *
+ * STRICTLY GREATER THAN ZERO. Every value read through this is a BOUND — a
+ * timeout, a cache lifetime, a map size — and zero is not a smaller bound, it
+ * is the absence of one. axios in particular reads `timeout: 0` as "wait
+ * forever", so a single typo in a deployment would turn the Check on a
+ * user-facing read path into an unbounded hang. A nonsensical value falls back
+ * to the documented default rather than being honoured.
+ */
 const num = (raw: string | undefined, fallback: number): number => {
   const value = raw === undefined ? NaN : Number(raw);
-  return Number.isFinite(value) && value >= 0 ? value : fallback;
+  return Number.isFinite(value) && value > 0 ? value : fallback;
 };
 
 /**
@@ -162,6 +173,40 @@ async function check(subject: string, env: NodeJS.ProcessEnv): Promise<{ allowed
 }
 
 /**
+ * Write one entry, keeping the map bounded.
+ *
+ * Expired entries go first — they are dead weight and evicting them costs
+ * nothing — and only if that is not enough does it drop the least recently
+ * written, which a Map gives us for free because it preserves insertion order
+ * and every write re-inserts. Evicting a LIVE entry is not a correctness
+ * problem: the next lookup for that subject simply asks OpenFGA again. An
+ * unbounded map, by contrast, is a slow leak in a long-lived process.
+ */
+function cacheSet(subject: string, entry: CacheEntry, nowMs: number, env: NodeJS.ProcessEnv): void {
+  const max = num(env.ENTITLEMENT_GRANT_CACHE_MAX, DEFAULT_CACHE_MAX_ENTRIES);
+  if (cache.size >= max) {
+    for (const [key, value] of cache) {
+      if (value.expiresAt <= nowMs) {
+        cache.delete(key);
+        bump('evicted');
+      }
+    }
+    // Oldest first, stopping the moment there is room. Written as a loop over
+    // the keys rather than repeated `next()` calls so there is no unreachable
+    // "the map was empty" guard: the iteration ends on its own, and both exits
+    // are paths a test can take.
+    for (const key of cache.keys()) {
+      if (cache.size < max) break;
+      cache.delete(key);
+      bump('evicted');
+    }
+  }
+  // Re-insert so insertion order tracks write recency rather than first sight.
+  cache.delete(subject);
+  cache.set(subject, entry);
+}
+
+/**
  * What this subject may see. `nowMs` is injected so cache expiry is testable
  * without sleeping.
  */
@@ -170,8 +215,12 @@ export async function grantsForSubject(
   nowMs: number = Date.now(),
   env: NodeJS.ProcessEnv = process.env
 ): Promise<readonly EntitlementName[]> {
-  if (subject.trim() === '') {
-    bump('no_subject');
+  // The subject shape is enforced HERE, before anything is asked of OpenFGA.
+  // A differently-shaped identifier is not a question OpenFGA can answer wrong
+  // — it is a question no tuple can ever match, so the answer is a permanent,
+  // silent `false`. See ./subject.ts.
+  if (!isEntitlementSubject(subject)) {
+    bump('bad_subject');
     return NO_GRANTS;
   }
 
@@ -196,7 +245,7 @@ export async function grantsForSubject(
     const ttl = errored
       ? num(env.ENTITLEMENT_GRANT_ERROR_TTL_MS, DEFAULT_ERROR_TTL_MS)
       : num(env.ENTITLEMENT_GRANT_CACHE_TTL_MS, DEFAULT_CACHE_TTL_MS);
-    cache.set(subject, { grants, expiresAt: nowMs + ttl });
+    cacheSet(subject, { grants, expiresAt: nowMs + ttl }, nowMs, env);
     return grants;
   })();
 

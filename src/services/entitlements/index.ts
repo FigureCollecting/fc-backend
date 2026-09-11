@@ -35,6 +35,11 @@
  *   initEntitlementSigning();                       // once, at boot
  *   const assertion = await entitlementHeaderFor(authentikUuid);
  *   await spineRead.compare(seed, nowIso, assertion);   // null => no header
+ *
+ * THE SUBJECT IS AN AUTHENTIK USER UUID and the module enforces it — see
+ * ./subject.ts. `isEntitlementSubject` is exported so a host application can
+ * check its own identity source against the same rule instead of discovering
+ * the mismatch as numbers that quietly fail to appear.
  */
 export {
   entitlementHeaderFor,
@@ -42,6 +47,8 @@ export {
   entitlementGrantCounters,
   resetEntitlementGrantsForTest,
 } from './grants';
+
+export { isEntitlementSubject, ENTITLEMENT_SUBJECT_PATTERN } from './subject';
 
 export {
   mintEntitlementAssertion,

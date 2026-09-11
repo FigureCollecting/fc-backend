@@ -15,13 +15,18 @@
  * half and lives next door with its own tests.
  *
  * THE FAILURE MODE IS SILENCE, BY DESIGN. No key, an unreadable key, the wrong
- * key type, no kid, no subject, nothing granted -> `null`, and the caller sends
- * NO header. At the spine that is indistinguishable from every other rejection:
- * a normal 200 with the levels withheld and `coverage.redacted` set. So a
- * misconfigured deploy degrades to "nobody sees magnitudes", never to an
- * outage and never to an open gate. It must therefore NEVER throw: a read that
- * would have succeeded redacted must not become a 500 because a Secret was not
- * mounted.
+ * key type, no kid, a subject of the wrong shape, nothing granted -> `null`,
+ * and the caller sends NO header. At the spine that is indistinguishable from
+ * every other rejection: a normal 200 with the levels withheld and
+ * `coverage.redacted` set. So a misconfigured deploy degrades to "nobody sees
+ * magnitudes", never to an outage and never to an open gate.
+ *
+ * IT NEVER THROWS, AND THAT IS LITERAL. Both inputs are validated at runtime
+ * rather than trusted to a type annotation: this module is published as a
+ * portable unit and will be called from code TypeScript has not checked, where
+ * a `null` grant list or a non-string subject is a `TypeError` out of a
+ * security path. A read that would have succeeded redacted must not become a
+ * 500 because a Secret was not mounted or a caller passed the wrong thing.
  *
  * KEY DELIVERY (mirror image of the spine's, deliberately):
  *   ENTITLEMENT_SIGNING_KEY_PEM   the PKCS#8 PEM itself (a mounted Secret's
@@ -48,6 +53,7 @@
 import * as crypto from 'node:crypto';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
+import { isEntitlementSubject } from './subject';
 import {
   ENTITLEMENT_ALG,
   ENTITLEMENT_AUDIENCE,
@@ -79,7 +85,7 @@ const bump = (name: string): void => {
   counters.set(name, (counters.get(name) ?? 0) + 1);
 };
 
-/** Snapshot of the mint counters: `minted`, `disabled`, `no_grants`, `no_subject`. */
+/** Snapshot of the mint counters: `minted`, `disabled`, `no_grants`, `bad_subject`. */
 export const entitlementMintCounters = (): Readonly<Record<string, number>> => Object.fromEntries(counters);
 
 /** Test seam: forget the loaded key and the counters so the next call re-reads env. */
@@ -192,15 +198,21 @@ export function mintEntitlementAssertion(
     return null;
   }
   // An assertion granting nothing is a header the spine parses, verifies and
-  // then ignores: pure cost, and one more place a bearer token exists.
-  if (ent.length === 0) {
+  // then ignores: pure cost, and one more place a bearer token exists. The
+  // Array check is not ceremony — an untyped caller passing null or a bare
+  // string would otherwise throw out of a security path.
+  if (!Array.isArray(ent) || ent.length === 0) {
     bump('no_grants');
     return null;
   }
-  if (sub.trim() === '') {
-    // The spine refuses a blank subject (`no_subject`). A grant naming nobody
-    // is not a grant.
-    bump('no_subject');
+  // The subject must be an Authentik uuid (./subject.ts). Guarded HERE as well
+  // as in the Check because the mint is an exported entry point in its own
+  // right, and because this is the module's only statement about identity once
+  // the host application's own user model is out of the picture. The uuid shape
+  // also bounds the subject at 36 characters, so an accepted one can never mint
+  // a header near the verifier's 4096-byte ceiling.
+  if (!isEntitlementSubject(sub)) {
+    bump('bad_subject');
     return null;
   }
 

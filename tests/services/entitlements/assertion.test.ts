@@ -176,6 +176,77 @@ describe('mintEntitlementAssertion — when there is nothing to assert', () => {
   });
 });
 
+describe('the subject must be an Authentik uuid', () => {
+  // The mint is exported, so it is an entry point in its own right. Guarding
+  // only the Check would leave the promise "sub is an Authentik uuid" true by
+  // convention rather than by construction — and it is the module's ONLY
+  // statement about identity once the legacy glue is deleted at the port.
+  it.each([
+    ['a Mongo ObjectId', '68c1f0a9b2d4e5f6a7b8c9d0'],
+    ['an email', 'ross@example.com'],
+    ['a uuid with a stray prefix', 'user:7f3a1c62-9d44-4e51-8b0a-2c6d5e1f9a33'],
+    ['a uuid missing a group', '7f3a1c62-9d44-4e51-8b0a'],
+  ])('refuses to sign %s', (_label, sub) => {
+    const kp = generateTestSigningKey(KID);
+    process.env.ENTITLEMENT_SIGNING_KEY_PEM = kp.privatePem;
+    process.env.ENTITLEMENT_SIGNING_KID = KID;
+
+    expect(mintEntitlementAssertion({ sub, ent: [INVENTORY_LEVELS] })).toBeNull();
+    expect(entitlementMintCounters().bad_subject).toBeGreaterThanOrEqual(1);
+  });
+
+  it('refuses an oversized subject, which would mint a header the verifier rejects', () => {
+    const kp = generateTestSigningKey(KID);
+    process.env.ENTITLEMENT_SIGNING_KEY_PEM = kp.privatePem;
+    process.env.ENTITLEMENT_SIGNING_KID = KID;
+
+    // The verifier refuses anything over 4096 bytes as `oversized` — another
+    // silent redaction. The uuid shape bounds the subject at 36 characters, so
+    // this can never be reached through a valid subject; the assertion pins
+    // that the bound is a consequence of the shape, not a coincidence.
+    expect(mintEntitlementAssertion({ sub: 'a'.repeat(8192), ent: [INVENTORY_LEVELS] })).toBeNull();
+  });
+
+  it.each([
+    ['a non-string subject', 12345],
+    ['an undefined subject', undefined],
+    ['a null subject', null],
+  ])('refuses %s rather than throwing', (_label, sub) => {
+    const kp = generateTestSigningKey(KID);
+    process.env.ENTITLEMENT_SIGNING_KEY_PEM = kp.privatePem;
+    process.env.ENTITLEMENT_SIGNING_KID = KID;
+
+    expect(() => mintEntitlementAssertion({ sub: sub as unknown as string, ent: [INVENTORY_LEVELS] })).not.toThrow();
+    expect(mintEntitlementAssertion({ sub: sub as unknown as string, ent: [INVENTORY_LEVELS] })).toBeNull();
+  });
+
+  it.each([
+    ['a null grant list', null],
+    ['a non-array grant list', 'inventory_levels'],
+  ])('refuses %s rather than throwing', (_label, ent) => {
+    const kp = generateTestSigningKey(KID);
+    process.env.ENTITLEMENT_SIGNING_KEY_PEM = kp.privatePem;
+    process.env.ENTITLEMENT_SIGNING_KID = KID;
+
+    expect(() =>
+      mintEntitlementAssertion({ sub: SUB, ent: ent as unknown as typeof INVENTORY_LEVELS[] })
+    ).not.toThrow();
+    expect(mintEntitlementAssertion({ sub: SUB, ent: ent as unknown as typeof INVENTORY_LEVELS[] })).toBeNull();
+  });
+
+  it('signs an uppercase uuid verbatim, never folded to lower case', () => {
+    const kp = generateTestSigningKey(KID);
+    process.env.ENTITLEMENT_SIGNING_KEY_PEM = kp.privatePem;
+    process.env.ENTITLEMENT_SIGNING_KID = KID;
+    const upper = SUB.toUpperCase();
+
+    const token = mintEntitlementAssertion({ sub: upper, ent: [INVENTORY_LEVELS] }) as string;
+    // An identifier that folds two spellings onto one makes two subjects into
+    // one, which is the opposite of what a grant needs.
+    expect(verifyEntitlementHeader(token, kp.keys).sub).toBe(upper);
+  });
+});
+
 describe('key loading', () => {
   it('reads the key from a file and derives the kid from its basename', () => {
     const kp = generateTestSigningKey('ent-2026-09');
