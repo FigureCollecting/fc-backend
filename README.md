@@ -306,6 +306,30 @@ See `.env.example` for complete configuration template. Run `./setup-local-env.s
 - `WEBAUTHN_RP_ID`: Domain for passkey binding (local: `localhost`, prod: `figurecollecting.com`)
 - `WEBAUTHN_ORIGIN`: Full origin URL for WebAuthn (local: `http://localhost:5081`, prod: `https://figurecollecting.com`)
 
+**Inventory-Level Entitlement Gate (spine reads -- see the section below):**
+- `ENTITLEMENT_SIGNING_KEY_PEM`: Ed25519 PKCS#8 private key, PEM text, used to sign the assertion
+- `ENTITLEMENT_SIGNING_KEY_FILE`: path to that PEM instead (what a projected Kubernetes Secret gives you)
+- `ENTITLEMENT_SIGNING_KID`: key id carried in the assertion header (e.g. `ent-2026-09`)
+  - Optional when using `ENTITLEMENT_SIGNING_KEY_FILE`: the file's basename minus its extension is used,
+    matching the `<kid>.pub` convention the spine names its verification keys by
+  - Required with an inline PEM, which has no filename to derive it from
+- `OPENFGA_API_URL`: OpenFGA base URL (the authz cluster)
+- `OPENFGA_STORE_ID`: OpenFGA store id
+- `OPENFGA_API_TOKEN`: OpenFGA preshared key (omit only if OpenFGA runs without auth)
+- `OPENFGA_MODEL_ID`: pin the authorization model id (optional; omit to use the latest)
+- `OPENFGA_APP_OBJECT`: the app object checked against (default `app:figurecollecting`)
+- `OPENFGA_TIMEOUT_MS`: per-Check timeout (default 2000)
+- `ENTITLEMENT_GRANT_CACHE_TTL_MS`: how long a Check result is reused (default 30000)
+- `ENTITLEMENT_GRANT_ERROR_TTL_MS`: how long a FAILED Check is remembered (default 5000)
+- `ENTITLEMENT_GRANT_CACHE_MAX`: ceiling on cached subjects before the oldest are evicted (default 10000)
+
+Every numeric variable above must be greater than zero. Zero is not a smaller bound, it is the absence
+of one -- a timeout of 0 means "wait forever" -- so a non-positive or nonsensical value falls back to the
+documented default rather than being honoured.
+
+Every one of these is optional in the sense that nothing breaks without them. Unset, the service simply
+never sends an assertion, and the spine returns reads with stock magnitudes withheld.
+
 **Debug Logging:**
 - `DEBUG`: Set to `true` to enable all application loggers (AUTH, SYNC, MAIN, DATABASE, etc.)
 - `DEBUG_LEVEL`: Log level threshold -- `verbose`, `info`, `warn`, or `error` (default: `info` in development, `error` in production)
@@ -341,6 +365,57 @@ Token Response Structure:
   }
 }
 ```
+
+### Inventory-Level Entitlement Gate
+
+`/compare` reads the spine's comparison view through `SpineRead.Compare`. The spine withholds per-store
+stock **magnitudes** -- how many units a shop holds, how many are on order, an order ceiling, and the same
+fact written in prose ("Only 2 left in stock") -- from any caller that cannot prove the `inventory_levels`
+entitlement. Availability is **not** gated: whether an item is in stock stays public, because that is what
+a store shows every visitor. The gate is on the number.
+
+**How a request is decided.** fc-backend is the only user-facing caller of the spine, so it is the only
+party that knows who is asking. Per request it:
+
+1. resolves the caller's Authentik subject from `authentikId` on the user document,
+2. runs `Check(user:<uuid>, inventory_levels, app:figurecollecting)` against OpenFGA,
+3. on an explicit allow, mints a 60-second Ed25519 assertion naming that subject and grant,
+4. sends it as the `fc-entitlements` request header, which the spine verifies against its mounted public key.
+
+**Every failure sends no header, and every read is still a 200.** Denied, no Authentik link, OpenFGA
+unreachable or erroring, no signing key, an unexpected exception: all of them read without an assertion and
+come back with magnitudes withheld and `coverage.redacted` naming what was left out. There is no status
+code, no error body and no timing difference that distinguishes "you may not see this" from "nobody
+observed this" -- a gate that answered differently would confirm the existence of the number it is hiding.
+That also means a misconfiguration degrades to *showing less*, never to an outage and never to an open gate.
+
+**Clients must read `coverage.redacted`.** A UI that treats a missing magnitude as zero renders a confident
+false negative on every unentitled surface. The marker is passed through from the spine verbatim.
+
+**The subject is an Authentik user uuid, and the module enforces it.** Not a numeric pk, not an email,
+not a username, and not this application's own user id. OpenFGA stores a subject verbatim and never
+resolves it, so a differently-shaped identifier is not an error at any layer: the Check returns false for
+a user that will never exist, no header is sent, and the numbers quietly go missing with every symptom
+pointing at the gate rather than at the identifier. The write side already refuses a non-uuid, so the read
+side does too -- `isEntitlementSubject` is exported for a caller that wants to check its own identity
+source against the same rule.
+
+**Granting the entitlement.** Two tuples, written by `fc-infra/tools/entitlements/grant-inventory-levels.sh
+<authentik-user-uuid>`: membership and the direct grant. The model defines the entitlement as an
+intersection of the two, so a direct tuple alone confers nothing and losing membership revokes the
+entitlement with it. The subject must be the Authentik user **uuid**, and the same uuid must be recorded as
+`authentikId` on the fc-backend user -- OpenFGA stores subjects verbatim and never resolves them, so a
+mismatch is not an error, it is a grant that silently entitles nobody.
+
+**Placement prerequisite.** The read grant is carried by a Kubernetes ServiceAccount: an fc-backend running
+meshed on the production k3s cluster in namespace `figurecollecting` under the `fc-backend` service account
+is admitted to the spine's read port. The legacy Coolify instance is not, and has `SPINE_READ_URL` unset, so
+it answers `/compare` with `503 SPINE_READ_UNCONFIGURED` and never reaches any of this. The gate is
+therefore complete and tested here, but only observable end to end once fc-backend is placed inside the mesh.
+
+**Key handling.** The signing key is read once at startup, never logged, and never written to a response.
+The assertion itself is a bearer grant for its 60 seconds and is likewise never logged, and OpenTelemetry is
+not configured to put request headers on spans (pinned by a test).
 
 ## Schema v3.0 Data Models
 

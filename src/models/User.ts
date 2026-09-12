@@ -9,6 +9,8 @@ export interface IUser extends Document {
   email: string;
   password: string;
   isAdmin: boolean;
+  /** Authentik user uuid, when this account is linked to one. See below. */
+  authentikId?: string;
   colorProfile: ColorProfile;
   emailVerified: boolean;
   emailVerifiedAt?: Date;
@@ -51,6 +53,25 @@ const UserSchema = new Schema<IUser>(
     isAdmin: {
       type: Boolean,
       default: false
+    },
+    // The Authentik user uuid this account maps to. OPTIONAL and absent on
+    // almost every document: fc-backend still authenticates with its own JWT
+    // over Mongo users, while the estate's authorization graph (OpenFGA, on the
+    // auth cluster) keys every subject by Authentik uuid.
+    //
+    // It is the JOIN between the two, and the only way an entitlement Check can
+    // be run for a logged-in user (src/services/entitlementGrants.ts). Absent
+    // means no subject means DENY, which is the correct default for everyone
+    // until Authentik becomes this service's login at the k3s cutover.
+    //
+    // sparse+unique: documents without the field are not indexed, but two users
+    // must never claim ONE Authentik identity — that would hand a second
+    // account somebody else's grants.
+    authentikId: {
+      type: String,
+      trim: true,
+      unique: true,
+      sparse: true
     },
     colorProfile: {
       type: String,

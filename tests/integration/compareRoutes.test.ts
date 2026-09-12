@@ -9,6 +9,7 @@
  * "happy path" case here would fail against this h1 stub.
  */
 import * as http from 'node:http';
+import type * as httpTypes from 'node:http';
 import type { AddressInfo, Socket } from 'node:net';
 import request from 'supertest';
 import mongoose from 'mongoose';
@@ -16,9 +17,17 @@ import { Code, ConnectError, type ConnectRouter } from '@connectrpc/connect';
 import { connectNodeAdapter } from '@connectrpc/connect-node';
 import { create } from '@bufbuild/protobuf';
 import { SpineRead, CompareResponseSchema, type CompareRequest as WireCompareRequest, type CompareResponse as WireCompareResponse } from '@figurecollecting/ingest-contract/read';
+import { ENTITLEMENTS_HEADER, INVENTORY_LEVELS } from '@figurecollecting/ingest-contract/entitlement';
 import { createTestApp } from '../helpers/testApp';
 import User from '../../src/models/User';
 import { generateTestToken } from '../setup';
+import { generateTestSigningKey, verifyEntitlementHeader } from '../helpers/entitlementVerifier';
+import * as legacySubject from '../../src/services/entitlementSubject.legacy';
+import { assertionFor } from '../../src/routes/compareRoutes';
+import {
+  resetEntitlementGrantsForTest,
+  resetEntitlementSigningForTest,
+} from '../../src/services/entitlements';
 
 const app = createTestApp();
 
@@ -41,12 +50,20 @@ type StubImpl = (req: WireCompareRequest) => Promise<WireCompareResponse> | Wire
 
 interface StubServer {
   baseUrl: string;
+  /** Request metadata the spine stub saw, one entry per call. */
+  capturedHeaders: Headers[];
   close: () => Promise<void>;
 }
 
 async function startStub(impl: StubImpl): Promise<StubServer> {
+  const capturedHeaders: Headers[] = [];
   const routes = (router: ConnectRouter) => {
-    router.service(SpineRead, { compare: async (req: WireCompareRequest) => impl(req) });
+    router.service(SpineRead, {
+      compare: async (req: WireCompareRequest, ctx: { requestHeader: Headers }) => {
+        capturedHeaders.push(ctx.requestHeader);
+        return impl(req);
+      },
+    });
   };
   const server = http.createServer(connectNodeAdapter({ routes }));
   const sockets = new Set<Socket>();
@@ -58,6 +75,7 @@ async function startStub(impl: StubImpl): Promise<StubServer> {
   const port = (server.address() as AddressInfo).port;
   return {
     baseUrl: `http://127.0.0.1:${port}`,
+    capturedHeaders,
     close: async () => {
       for (const socket of sockets) socket.destroy();
       await new Promise<void>(resolve => server.close(() => resolve()));
@@ -252,5 +270,293 @@ describe('rate limiting wiring', () => {
     const protectIdx = names.indexOf('protect');
     expect(limiterIdx).toBeGreaterThanOrEqual(0);
     expect(protectIdx).toBeGreaterThan(limiterIdx);
+  });
+});
+
+/**
+ * D6 U6 — the entitlement gate END TO END through the route: an OpenFGA Check,
+ * an Ed25519 assertion minted from its outcome, and the `fc-entitlements`
+ * header on the SpineRead call. Both dependencies are REAL in-process servers
+ * (a Connect spine stub and an HTTP OpenFGA stub), so the header either arrives
+ * on the wire or it does not — there is no mock to agree with itself.
+ *
+ * EVERY CASE BELOW IS A 200. The difference between entitled and not is which
+ * values the spine puts in the body, never a status code, never an error: a
+ * gate that answers differently when it refuses is an existence oracle.
+ */
+describe('Compare Routes — entitlement assertion (D6 U6)', () => {
+  const ROSS_UUID = '7f3a1c62-9d44-4e51-8b0a-2c6d5e1f9a33';
+  const STORE_ID = '01KXA5NRJYR0GYKX4NWQ2ANDZS';
+  const FGA_TOKEN = 'preshared-never-logged';
+
+  const entitledUserId = new mongoose.Types.ObjectId('0000000000000000000005a1');
+  const unlinkedUserId = new mongoose.Types.ObjectId('0000000000000000000005a2');
+
+  interface FgaStub {
+    baseUrl: string;
+    captured: any[];
+    close: () => Promise<void>;
+  }
+
+  async function startFga(respond: (res: httpTypes.ServerResponse) => void): Promise<FgaStub> {
+    const captured: any[] = [];
+    const server = http.createServer((req, res) => {
+      const chunks: Buffer[] = [];
+      req.on('data', c => chunks.push(c as Buffer));
+      req.on('end', () => {
+        try {
+          captured.push(JSON.parse(Buffer.concat(chunks).toString('utf8')));
+        } catch {
+          captured.push(null);
+        }
+        respond(res);
+      });
+    });
+    const sockets = new Set<Socket>();
+    server.on('connection', sk => {
+      sockets.add(sk);
+      sk.once('close', () => sockets.delete(sk));
+    });
+    await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
+    const port = (server.address() as AddressInfo).port;
+    return {
+      baseUrl: `http://127.0.0.1:${port}`,
+      captured,
+      close: async () => {
+        for (const sk of sockets) sk.destroy();
+        await new Promise<void>(resolve => server.close(() => resolve()));
+      },
+    };
+  }
+
+  const fgaAllows = (allowed: boolean) => (res: httpTypes.ServerResponse): void => {
+    res.writeHead(200, { 'content-type': 'application/json' });
+    res.end(JSON.stringify({ allowed }));
+  };
+  const fgaBroken = (res: httpTypes.ServerResponse): void => {
+    res.writeHead(500);
+    res.end('{"code":"internal_error"}');
+  };
+
+  const ENV_KEYS = [
+    'SPINE_READ_URL',
+    'OPENFGA_API_URL',
+    'OPENFGA_STORE_ID',
+    'OPENFGA_API_TOKEN',
+    'ENTITLEMENT_SIGNING_KEY_PEM',
+    'ENTITLEMENT_SIGNING_KID',
+  ] as const;
+
+  let savedEnv: Record<string, string | undefined> = {};
+  let spine: StubServer | null = null;
+  let fga: FgaStub | null = null;
+  let keypair: ReturnType<typeof generateTestSigningKey>;
+  let entitledToken: string;
+  let unlinkedToken: string;
+  let consoleOutput: string[] = [];
+  let spies: jest.SpyInstance[] = [];
+
+  beforeEach(async () => {
+    savedEnv = Object.fromEntries(ENV_KEYS.map(k => [k, process.env[k]]));
+    resetEntitlementGrantsForTest();
+    resetEntitlementSigningForTest();
+
+    keypair = generateTestSigningKey('ent-test-2026-09');
+    process.env.ENTITLEMENT_SIGNING_KEY_PEM = keypair.privatePem;
+    process.env.ENTITLEMENT_SIGNING_KID = keypair.kid;
+    process.env.OPENFGA_STORE_ID = STORE_ID;
+    process.env.OPENFGA_API_TOKEN = FGA_TOKEN;
+
+    await User.create({
+      _id: entitledUserId,
+      username: 'linkedCompareUser',
+      email: 'linked-compare@test.com',
+      password: 'password123',
+      authentikId: ROSS_UUID,
+    });
+    await User.create({
+      _id: unlinkedUserId,
+      username: 'unlinkedCompareUser',
+      email: 'unlinked-compare@test.com',
+      password: 'password123',
+    });
+    entitledToken = generateTestToken(entitledUserId.toString());
+    unlinkedToken = generateTestToken(unlinkedUserId.toString());
+
+    consoleOutput = [];
+    spies = (['log', 'warn', 'error', 'info', 'debug'] as const).map(level =>
+      jest.spyOn(console, level).mockImplementation((...args: unknown[]) => {
+        consoleOutput.push(args.map(String).join(' '));
+      })
+    );
+  });
+
+  afterEach(async () => {
+    for (const spy of spies) spy.mockRestore();
+    spies = [];
+    if (spine) {
+      await spine.close();
+      spine = null;
+    }
+    if (fga) {
+      await fga.close();
+      fga = null;
+    }
+    for (const k of ENV_KEYS) {
+      if (savedEnv[k] === undefined) delete process.env[k];
+      else process.env[k] = savedEnv[k] as string;
+    }
+    resetEntitlementGrantsForTest();
+    resetEntitlementSigningForTest();
+  });
+
+  /** Stand up both stubs and point the app at them. */
+  async function wire(fgaResponder: (res: httpTypes.ServerResponse) => void, resultJson = JSON.stringify(FIXTURE_RESULT)): Promise<void> {
+    spine = await startStub(() => create(CompareResponseSchema, { resultJson }));
+    fga = await startFga(fgaResponder);
+    process.env.SPINE_READ_URL = spine.baseUrl;
+    process.env.OPENFGA_API_URL = fga.baseUrl;
+  }
+
+  const get = (token: string) =>
+    request(app).get(`/compare/by-gtin/${VALID_GTIN14}`).set('Authorization', `Bearer ${token}`);
+
+  const sentAssertion = (): string | null => spine!.capturedHeaders[0]?.get(ENTITLEMENTS_HEADER) ?? null;
+
+  it('mints an assertion the spine verifier accepts when the Check allows', async () => {
+    await wire(fgaAllows(true));
+
+    const res = await get(entitledToken);
+
+    expect(res.status).toBe(200);
+    const assertion = sentAssertion();
+    expect(assertion).not.toBeNull();
+
+    const verified = verifyEntitlementHeader(assertion, keypair.keys);
+    expect(verified.outcome).toBe('granted');
+    expect(verified.sub).toBe(ROSS_UUID);
+    expect([...verified.grants]).toEqual([INVENTORY_LEVELS]);
+
+    // And the Check that authorised it asked the app-level question.
+    expect(fga!.captured[0].tuple_key).toEqual({
+      user: `user:${ROSS_UUID}`,
+      relation: INVENTORY_LEVELS,
+      object: 'app:figurecollecting',
+    });
+  });
+
+  it('sends NO header when the Check denies — and still answers 200', async () => {
+    await wire(fgaAllows(false));
+
+    const res = await get(entitledToken);
+
+    expect(res.status).toBe(200);
+    expect(spine!.capturedHeaders[0].has(ENTITLEMENTS_HEADER)).toBe(false);
+  });
+
+  it('sends NO header when the Check ERRORS — the B1 fail-open lesson, end to end', async () => {
+    await wire(fgaBroken);
+
+    const res = await get(entitledToken);
+
+    expect(res.status).toBe(200);
+    expect(spine!.capturedHeaders[0].has(ENTITLEMENTS_HEADER)).toBe(false);
+  });
+
+  it('sends NO header, and runs NO Check, for a user with no Authentik identity', async () => {
+    await wire(fgaAllows(true));
+
+    const res = await get(unlinkedToken);
+
+    expect(res.status).toBe(200);
+    expect(spine!.capturedHeaders[0].has(ENTITLEMENTS_HEADER)).toBe(false);
+    expect(fga!.captured).toHaveLength(0);
+  });
+
+  it('sends NO header when no signing key is configured, even for an entitled user', async () => {
+    delete process.env.ENTITLEMENT_SIGNING_KEY_PEM;
+    delete process.env.ENTITLEMENT_SIGNING_KID;
+    resetEntitlementSigningForTest();
+    await wire(fgaAllows(true));
+
+    const res = await get(entitledToken);
+
+    expect(res.status).toBe(200);
+    expect(spine!.capturedHeaders[0].has(ENTITLEMENTS_HEADER)).toBe(false);
+  });
+
+  it('sends NO header when OpenFGA is not configured at all', async () => {
+    spine = await startStub(() => create(CompareResponseSchema, { resultJson: JSON.stringify(FIXTURE_RESULT) }));
+    process.env.SPINE_READ_URL = spine.baseUrl;
+    delete process.env.OPENFGA_API_URL;
+
+    const res = await get(entitledToken);
+
+    expect(res.status).toBe(200);
+    expect(spine.capturedHeaders[0].has(ENTITLEMENTS_HEADER)).toBe(false);
+  });
+
+  it('never logs the assertion or the OpenFGA preshared key', async () => {
+    await wire(fgaAllows(true));
+
+    await get(entitledToken);
+
+    const assertion = sentAssertion() as string;
+    const text = consoleOutput.join('\n');
+    expect(text).not.toContain(assertion);
+    expect(text).not.toContain(FGA_TOKEN);
+    expect(text).not.toContain('PRIVATE KEY');
+  });
+
+  it('surfaces coverage.redacted so the client can tell "withheld" from "never observed"', async () => {
+    const redacted = {
+      ...FIXTURE_RESULT,
+      coverage: { redacted: [INVENTORY_LEVELS], storesSeen: 1 },
+    };
+    await wire(fgaAllows(false), JSON.stringify(redacted));
+
+    const res = await get(entitledToken);
+
+    expect(res.status).toBe(200);
+    // Passthrough is verbatim: the marker the spine set must reach the UI
+    // untouched, or every unentitled surface renders a confident zero.
+    expect(res.body.coverage.redacted).toEqual([INVENTORY_LEVELS]);
+    expect(res.body.coverage.storesSeen).toBe(1);
+  });
+
+  it('reuses one Check across repeated reads by the same user', async () => {
+    await wire(fgaAllows(true));
+
+    await get(entitledToken);
+    await get(entitledToken);
+    await get(entitledToken);
+
+    expect(fga!.captured).toHaveLength(1);
+    expect(spine!.capturedHeaders).toHaveLength(3);
+    for (const headers of spine!.capturedHeaders) {
+      expect(headers.has(ENTITLEMENTS_HEADER)).toBe(true);
+    }
+  });
+
+  it('mints nothing for a request with no authenticated user', async () => {
+    // Unreachable through the route (`protect` runs first), which is exactly
+    // why it is asserted directly: the helper's contract is "no user, no
+    // assertion", and nothing else here would notice if that changed.
+    await expect(assertionFor(undefined)).resolves.toBeNull();
+  });
+
+  it('serves a redacted read rather than a 500 when grant resolution throws unexpectedly', async () => {
+    await wire(fgaAllows(true));
+    const boom = jest
+      .spyOn(legacySubject, 'resolveEntitlementSubject')
+      .mockRejectedValue(new Error('authz substrate exploded'));
+    try {
+      const res = await get(entitledToken);
+
+      expect(res.status).toBe(200);
+      expect(spine!.capturedHeaders[0].has(ENTITLEMENTS_HEADER)).toBe(false);
+    } finally {
+      boom.mockRestore();
+    }
   });
 });

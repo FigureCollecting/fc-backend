@@ -27,6 +27,7 @@ import {
   CompareRequestSchema,
   type CompareResponse,
 } from '@figurecollecting/ingest-contract/read';
+import { ENTITLEMENTS_HEADER } from '@figurecollecting/ingest-contract/entitlement';
 
 /** Per-call deadline. The spine's read RPC has no deadline of its own — a
  * caller-side timeout is the only thing standing between us and a hang. */
@@ -51,8 +52,25 @@ export class SpineReadClient {
    * never reads wall time itself) — the RPC never reads wall time
    * server-side either (read.proto FIDELITY DOCTRINE): every verdict must
    * be reproducible from (gathered signals, cfg, now_iso).
+   *
+   * `assertion` is the compact JWS from src/services/entitlements/assertion.ts,
+   * or null/undefined when the caller holds nothing. It travels as REQUEST
+   * METADATA, never in the message: read-service.ts sets OTel span attributes
+   * off request FIELDS, so a body-borne assertion would be exported to a
+   * collector on every call, and every other caller would have to model a
+   * field that is none of their business.
+   *
+   * AN ABSENT HEADER IS THE NORMAL CASE, NOT AN ERROR. Unentitled, unlinked,
+   * denied, OpenFGA unreachable, no signing key — all of them arrive here as
+   * no assertion, and the spine answers each with a normal 200 whose stock
+   * magnitudes are withheld and marked in `coverage.redacted`. So nothing on
+   * this path may throw or branch on the absence.
    */
-  async compare(seed: CompareSeed, nowIso: string): Promise<CompareResponse> {
+  async compare(
+    seed: CompareSeed,
+    nowIso: string,
+    assertion?: string | null
+  ): Promise<CompareResponse> {
     const request = create(CompareRequestSchema, {
       seed:
         'gtin14' in seed
@@ -60,7 +78,17 @@ export class SpineReadClient {
           : { case: 'headId' as const, value: seed.headId },
       nowIso,
     });
-    return this.client.compare(request, { timeoutMs: this.timeoutMs });
+    // Set the header only when there is one to set: an empty value reads as
+    // `absent` at the spine anyway, but sending it always would make a caller
+    // that lost its key look exactly like one that never had one.
+    const headers =
+      assertion !== undefined && assertion !== null && assertion !== ''
+        ? { [ENTITLEMENTS_HEADER]: assertion }
+        : undefined;
+    return this.client.compare(request, {
+      timeoutMs: this.timeoutMs,
+      ...(headers === undefined ? {} : { headers }),
+    });
   }
 }
 
